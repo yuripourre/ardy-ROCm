@@ -69,15 +69,21 @@ class GuiModelMixin:
             def _(event: viser.GuiEvent) -> None:
                 _sync_chosen_model()
 
+            # TensorRT requires NVIDIA; on ROCm/HIP only None / torch.compile are useful.
+            _on_rocm = bool(getattr(torch.version, "hip", None))
+            _accel_options = (
+                ["None", "torch.compile"]
+                if _on_rocm
+                else ["None", "ONNX-TRT (fp16)", "ONNX-TRT (fp32)", "torch.compile"]
+            )
+            if self.compile_model:
+                _accel_initial = "torch.compile" if _on_rocm else "ONNX-TRT (fp16)"
+            else:
+                _accel_initial = "None"
             g.gui_compile_mode = client.gui.add_dropdown(
                 "Acceleration",
-                options=[
-                    "None",
-                    "ONNX-TRT (fp16)",
-                    "ONNX-TRT (fp32)",
-                    "torch.compile",
-                ],
-                initial_value="ONNX-TRT (fp16)" if self.compile_model else "None",
+                options=_accel_options,
+                initial_value=_accel_initial,
             )
             _text_encoder_options = [
                 "cuda / bfloat16",

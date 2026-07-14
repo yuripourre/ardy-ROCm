@@ -9,6 +9,8 @@ mixins into ``InteractiveTimelineDemo`` and exposes the Hydra ``main`` entry poi
 
 import argparse
 
+import torch
+
 from interactive_demo.camera import CameraMixin
 from interactive_demo.characters import CharactersMixin
 from interactive_demo.client import ClientMixin
@@ -132,6 +134,11 @@ class InteractiveTimelineDemo(
         return self.prompt_colors[prompt_index % len(self.prompt_colors)]
 
 
+def _default_compile_model() -> bool:
+    """TensorRT is NVIDIA-only; on ROCm/HIP default to no acceleration so the demo starts cleanly."""
+    return not bool(getattr(torch.version, "hip", None))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="ARDY Interactive Demo")
     parser.add_argument(
@@ -139,9 +146,20 @@ def main() -> None:
         action="store_true",
         help="Do not compile the model (initial backend is 'None' instead of 'ONNX-TRT (fp16)').",
     )
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="Prefer acceleration at startup (ONNX-TRT on NVIDIA; ignored on ROCm — use torch.compile in the UI).",
+    )
     args = parser.parse_args()
 
-    demo = InteractiveTimelineDemo(compile_model=not args.no_compile)
+    compile_model = _default_compile_model()
+    if args.no_compile:
+        compile_model = False
+    elif args.compile:
+        compile_model = True
+
+    demo = InteractiveTimelineDemo(compile_model=compile_model)
     demo.run()
 
 
