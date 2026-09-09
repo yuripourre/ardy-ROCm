@@ -9,6 +9,8 @@ Examples:
     python scripts/generate.py "A person walks in a circle." --checkpoints_dir checkpoints
     python scripts/generate.py "A person jumps." --model soma --num_samples 4 --seed 0 --output jump
     python scripts/generate.py "A person walks forward." --model g1 --duration 8.0
+
+Writes ``.npz`` for every model, ``.bvh`` for all models, and ``.csv`` (MuJoCo qpos) for G1.
 """
 
 import argparse
@@ -68,7 +70,12 @@ def parse_args():
         "--output",
         type=str,
         default="output",
-        help="Output stem name: with one sample writes a single file per format (e.g. test.npz, test.csv); with multiple samples creates a folder and writes test_00.npz, test_01.npz, ... inside it. Used for NPZ and CSV. Bare names are written under outputs/; pass a path (e.g. ./test or results/test) to write elsewhere.",
+        help="Output stem name: with one sample writes a single file per format (e.g. test.npz, test.bvh, test.csv); with multiple samples creates a folder and writes test_00.npz, test_01.npz, ... inside it. Used for NPZ, BVH, and CSV. Bare names are written under outputs/; pass a path (e.g. ./test or results/test) to write elsewhere.",
+    )
+    parser.add_argument(
+        "--no-bvh",
+        action="store_true",
+        help="Skip BVH export (NPZ is always written).",
     )
     parser.add_argument(
         "--history_frames",
@@ -281,7 +288,7 @@ def main():
     output = to_numpy(output)
 
     n_samples = int(output["posed_joints"].shape[0])
-    # Parse the output stem once; all formats (NPZ, CSV) use this base name.
+    # Parse the output stem once; all formats (NPZ, BVH, CSV) use this base name.
     output_base = _resolve_output_base(args.output)
 
     # Save the NPZ output
@@ -299,6 +306,33 @@ def main():
                 fps,
                 text,
             )
+
+    if not args.no_bvh:
+        from ardy.exports.bvh import write_bvh
+
+        if n_samples == 1:
+            bvh_path = _single_file_path(output_base, ".bvh")
+            print(f"Saving the bvh output to {bvh_path}")
+            sample = _select_sample(output, 0, n_samples)
+            write_bvh(
+                bvh_path,
+                sample["local_rot_mats"],
+                sample["root_positions"],
+                fps,
+                model.skeleton,
+            )
+        else:
+            out_dir, _, base_name = _output_dir_and_path(output_base, "motion", ".bvh")
+            print(f"Saving the bvh output to {out_dir}/ ({base_name}_00.bvh ...)")
+            for i in range(n_samples):
+                sample = _select_sample(output, i, n_samples)
+                write_bvh(
+                    os.path.join(out_dir, f"{base_name}_{i:02d}.bvh"),
+                    sample["local_rot_mats"],
+                    sample["root_positions"],
+                    fps,
+                    model.skeleton,
+                )
 
     # Save the CSV output (MuJoCo qpos) for G1
     if "g1" in resolved_model.lower():

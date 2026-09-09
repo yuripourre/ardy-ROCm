@@ -6,6 +6,34 @@
 from .common import *  # noqa: F401,F403
 
 
+def _session_motion_tensors(session, character_index: int = 0):
+    """Inverse ``session.motion_tensor`` to local rotations and root translation.
+
+    Returns:
+        ``(local_rot_mats, root_positions)`` with shapes ``[T, J, 3, 3]`` and ``[T, 3]``, or
+        ``(None, None)`` when motion is unavailable.
+    """
+    if session.motion_tensor is None or session.motion_rep is None:
+        return None, None
+
+    tensor_unnorm = session.motion_rep.unnormalize(session.motion_tensor)
+    inverse_output = session.motion_rep.inverse(tensor_unnorm, is_normalized=False)
+    local_rot_mats = inverse_output["local_rot_mats"]
+    root_positions = inverse_output["root_positions"]
+
+    if local_rot_mats.ndim == 5:
+        local_rot_mats = local_rot_mats[character_index]
+        root_positions = root_positions[character_index]
+    elif local_rot_mats.ndim == 4 and local_rot_mats.shape[0] > 1:
+        local_rot_mats = local_rot_mats[character_index]
+        root_positions = root_positions[character_index]
+
+    active_frames = session.max_frame_idx + 1
+    local_rot_mats = local_rot_mats[:active_frames]
+    root_positions = root_positions[:active_frames]
+    return local_rot_mats, root_positions
+
+
 class SessionIOMixin:
     def export_session(self, client_id: int, filepath: str):
         """Export generated motion, text prompts, and constraints to a file using pickle."""
@@ -42,16 +70,14 @@ class SessionIOMixin:
                     "foot_contacts": session.foot_contacts.cpu().numpy() if session.foot_contacts is not None else None,
                 }
 
-                # Inverse motion_tensor to get local_rot_mats and root_positions
-                if session.motion_tensor is not None and session.motion_rep is not None:
-                    try:
-                        tensor_unnorm = session.motion_rep.unnormalize(session.motion_tensor)
-                        inverse_output = session.motion_rep.inverse(tensor_unnorm, is_normalized=False)
-                        motion_data["local_rot_mats"] = inverse_output["local_rot_mats"].cpu().numpy()
-                        motion_data["root_positions"] = inverse_output["root_positions"].cpu().numpy()
+                try:
+                    local_rot_mats, root_positions = _session_motion_tensors(session)
+                    if local_rot_mats is not None:
+                        motion_data["local_rot_mats"] = local_rot_mats.cpu().numpy()
+                        motion_data["root_positions"] = root_positions.cpu().numpy()
                         print("[Export] Added local_rot_mats and root_positions")
-                    except Exception as e:
-                        print(f"[Export] Could not compute local_rot_mats/root_positions: {e}")
+                except Exception as e:
+                    print(f"[Export] Could not compute local_rot_mats/root_positions: {e}")
 
                 export_data["motion"] = motion_data
 
@@ -176,6 +202,36 @@ class SessionIOMixin:
             return True
         except Exception as e:
             print(f"[Export] Error exporting session: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return False
+
+    def export_motion_bvh(self, client_id: int, filepath: str, character_index: int = 0) -> bool:
+        """Export the current session motion to a BVH file."""
+        if not self.client_active(client_id):
+            return False
+        session = self.client_sessions[client_id]
+
+        try:
+            local_rot_mats, root_positions = _session_motion_tensors(session, character_index=character_index)
+            if local_rot_mats is None or root_positions is None:
+                print("[Export BVH] No motion to export (load a model and generate motion first).")
+                return False
+
+            from ardy.exports.bvh import write_bvh
+
+            write_bvh(
+                filepath,
+                local_rot_mats,
+                root_positions,
+                fps=session.model_fps,
+                skeleton=session.motion_rep.skeleton,
+            )
+            print(f"[Export BVH] Saved motion to {filepath} ({local_rot_mats.shape[0]} frames)")
+            return True
+        except Exception as e:
+            print(f"[Export BVH] Error exporting motion: {e}")
             import traceback
 
             traceback.print_exc()

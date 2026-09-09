@@ -21,6 +21,13 @@ class GuiIOMixin:
                 g.gui_export_session_button = client.gui.add_button("Export Session")
                 g.gui_load_session_button = client.gui.add_button("Load Session")
 
+            with client.gui.add_folder("Motion Export", expand_by_default=True):
+                g.gui_bvh_file_path = client.gui.add_text(
+                    "BVH File Path",
+                    initial_value=f".cache/export/motion_{default_timestamp}.bvh",
+                )
+                g.gui_export_bvh_button = client.gui.add_button("Export Motion (BVH)")
+
             # Root Constraints Group
             with client.gui.add_folder("Root Constraints", expand_by_default=True):
                 g.gui_root_file_path = client.gui.add_text(
@@ -87,6 +94,26 @@ class GuiIOMixin:
                     hint="Height of the captured image in pixels",
                 )
                 g.gui_capture_viewport_button = client.gui.add_button("Capture Viewport Image")
+
+            @g.gui_export_bvh_button.on_click
+            def _(event: viser.GuiEvent) -> None:
+                filepath = g.gui_bvh_file_path.value
+                success = self.export_motion_bvh(client_id, filepath)
+                if event.client:
+                    if success:
+                        event.client.add_notification(
+                            title="Motion Exported",
+                            body=f"Saved to {filepath}",
+                            auto_close_seconds=3.0,
+                            color="green",
+                        )
+                    else:
+                        event.client.add_notification(
+                            title="BVH Export Failed",
+                            body="Failed to export motion. Check console for details.",
+                            auto_close_seconds=5.0,
+                            color="red",
+                        )
 
             @g.gui_export_session_button.on_click
             def _(event: viser.GuiEvent) -> None:
