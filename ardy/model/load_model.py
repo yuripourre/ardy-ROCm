@@ -18,10 +18,15 @@ from .loading import (
 from .registry import hf_repo_id, resolve_model_name
 
 DEFAULT_TEXT_ENCODER = "llm2vec"
+# McGill LLM2Vec adapters are LoRA-only and expect Llama-3-8B-Instruct underneath.
+# The official Meta repo is gated; default to an ungated redistribution of the same
+# weights. Override with LLM2VEC_LLM_BASE=meta-llama/Meta-Llama-3-8B-Instruct once approved.
+DEFAULT_LLM2VEC_LLM_BASE = "NousResearch/Meta-Llama-3-8B-Instruct"
 TEXT_ENCODER_PRESETS = {
     "llm2vec": {
         "target": "ardy.model.LLM2VecEncoder",
         "kwargs": {
+            "llm_model_name_or_path": DEFAULT_LLM2VEC_LLM_BASE,
             "base_model_name_or_path": "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp",
             "peft_model_name_or_path": "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised",
             "dtype": "bfloat16",

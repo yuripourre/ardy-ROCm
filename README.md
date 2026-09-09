@@ -37,24 +37,19 @@ pip install -e ".[all]"
 
 </details>
 
-### Set up Hugging Face token for text encoder
+### Text encoder (LLM2Vec)
 
-The text encoder relies on the gated [meta-llama/Meta-Llama-3-8B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct) model, which requires:
+ARDY conditions on **LLM2Vec** embeddings trained on Llama-3-8B-Instruct. The McGill LoRA adapters are public; the dense Llama weights default to an ungated mirror (`NousResearch/Meta-Llama-3-8B-Instruct`) so you do not need Meta HF approval to run.
 
-- Your Hugging Face account has been granted access to the model page.
-- You provide a Hugging Face token at runtime.
-
-After you receive access to the Llama repo, create an access token in [Hugging Face token settings](https://huggingface.co/settings/tokens), then either log in on the command line:
+Optional overrides:
 
 ```bash
+# Use the official gated Meta weights once your HF access is approved:
+export LLM2VEC_LLM_BASE=meta-llama/Meta-Llama-3-8B-Instruct
 hf auth login
 ```
 
-or paste the token in `~/.cache/huggingface/token`. If you do not have `hf` installed, install it first:
-
-```bash
-pip install --upgrade huggingface_hub
-```
+A Hugging Face token is still useful for higher rate limits when downloading adapters/checkpoints (`hf auth login`, or paste a token in `~/.cache/huggingface/token`). Install the CLI with `pip install --upgrade huggingface_hub` if needed.
 
 ### Checkpoints
 

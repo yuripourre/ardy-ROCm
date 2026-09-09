@@ -57,6 +57,11 @@ from transformers import (
 
 logger = logging.getLogger(__name__)
 
+# Official Meta id used by LLM2Vec Llama-3 Instruct checkpoints for chat templating.
+# Ungated mirrors must be canonicalized to this so prepare_for_tokenization matches training.
+LLAMA3_INSTRUCT_MODEL_ID = "meta-llama/Meta-Llama-3-8B-Instruct"
+LLAMA3_BASE_MODEL_ID = "meta-llama/Meta-Llama-3-8B"
+
 
 def batch_to_device(batch, target_device: device):
     """Send a pytorch batch to a device (CPU/GPU)"""
@@ -64,6 +69,17 @@ def batch_to_device(batch, target_device: device):
         if isinstance(batch[key], Tensor):
             batch[key] = batch[key].to(target_device)
     return batch
+
+
+def _is_llama3_instruct_family(name_or_path: Optional[str]) -> bool:
+    """True for official Meta Llama-3 Instruct and common ungated redistributions."""
+    if not name_or_path:
+        return False
+    name = name_or_path.lower().replace("_", "-")
+    if name == LLAMA3_INSTRUCT_MODEL_ID.lower():
+        return True
+    # e.g. NousResearch/Meta-Llama-3-8B-Instruct, unsloth/llama-3-8b-Instruct
+    return "llama-3" in name and "instruct" in name and "llama-3.1" not in name and "llama-3.2" not in name
 
 
 class LLM2Vec(nn.Module):
@@ -113,6 +129,7 @@ class LLM2Vec(nn.Module):
         cls,
         base_model_name_or_path,
         peft_model_name_or_path=None,
+        llm_model_name_or_path=None,
         merge_peft=False,
         enable_bidirectional=True,
         **kwargs,
@@ -121,25 +138,39 @@ class LLM2Vec(nn.Module):
         keys = ["pooling_mode", "max_length", "doc_max_length", "skip_instruction"]
         encoder_args = {key: kwargs.pop(key, None) for key in keys if kwargs.get(key) is not None}
 
-        tokenizer = AutoTokenizer.from_pretrained(base_model_name_or_path)
+        # When ``llm_model_name_or_path`` is set, dense Transformer weights come from that
+        # repo (e.g. an ungated Llama-3 Instruct mirror) and ``base_model_name_or_path`` is
+        # treated as the MNTP LoRA adapter to merge on top. Otherwise keep the original
+        # LLM2Vec behavior (base path supplies weights, optionally already PEFT-wrapped).
+        weights_path = llm_model_name_or_path or base_model_name_or_path
+        tokenizer_path = weights_path
+
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = "left"
 
-        config = AutoConfig.from_pretrained(base_model_name_or_path)
+        config = AutoConfig.from_pretrained(weights_path)
         config_class_name = config.__class__.__name__
 
         model_class = cls._get_model_class(config_class_name, enable_bidirectional=enable_bidirectional)
 
-        model = model_class.from_pretrained(base_model_name_or_path, **kwargs)
+        model = model_class.from_pretrained(weights_path, **kwargs)
 
-        if os.path.isdir(base_model_name_or_path) and os.path.exists(f"{base_model_name_or_path}/config.json"):
-            with open(f"{base_model_name_or_path}/config.json", "r") as fIn:
+        if os.path.isdir(weights_path) and os.path.exists(f"{weights_path}/config.json"):
+            with open(f"{weights_path}/config.json", "r") as fIn:
                 config_dict = json.load(fIn)
             config = PretrainedConfig.from_dict(config_dict)
             model.config._name_or_path = config._name_or_path
 
-        # For special case where config.json and adapter weights are in the same directory
-        if hasattr(model, "peft_config"):
+        # Explicit MNTP adapter on an external LLM base (ungated-mirror workflow).
+        if llm_model_name_or_path is not None:
+            model = PeftModel.from_pretrained(model, base_model_name_or_path)
+            model = model.merge_and_unload()
+            if _is_llama3_instruct_family(llm_model_name_or_path):
+                # Keep chat templating identical to the gated Meta checkpoint LLM2Vec was trained with.
+                model.config._name_or_path = LLAMA3_INSTRUCT_MODEL_ID
+        # Legacy special case: config.json and adapter weights live in the same directory.
+        elif hasattr(model, "peft_config"):
             model = PeftModel.from_pretrained(
                 model,
                 base_model_name_or_path,
@@ -167,25 +198,26 @@ class LLM2Vec(nn.Module):
         return cls(model=model, tokenizer=tokenizer, **config)
 
     def prepare_for_tokenization(self, text):
-        if self.model.config._name_or_path == "meta-llama/Meta-Llama-3-8B-Instruct":
+        name_or_path = self.model.config._name_or_path
+        if _is_llama3_instruct_family(name_or_path):
             text = "<|start_header_id|>user<|end_header_id|>\n\n" + text.strip() + "<|eot_id|>"
             return text
-        if self.model.config._name_or_path in [
+        if name_or_path in [
             "mistralai/Mistral-7B-Instruct-v0.2",
             "meta-llama/Llama-2-7b-chat-hf",
         ]:
             text = "[INST] " + text.strip() + " [/INST]"
-        if self.model.config._name_or_path in [
+        if name_or_path in [
             "google/gemma-2-9b-it",
         ]:
             text = "<bos><start_of_turn>user\n" + text.strip() + "<end_of_turn>"
-        if self.model.config._name_or_path in [
+        if name_or_path in [
             "Qwen/Qwen2-1.5B-Instruct",
             "Qwen/Qwen2-7B-Instruct",
         ]:
             text = "<|im_start|>user\n" + text.strip() + "<|im_end|>"
         if self.pooling_mode == "eos_token":
-            if self.model.config._name_or_path == "meta-llama/Meta-Llama-3-8B":
+            if name_or_path == LLAMA3_BASE_MODEL_ID:
                 text = text.strip() + "<|end_of_text|>"
             elif isinstance(self.model.config, LlamaConfig) or isinstance(self.model.config, MistralConfig):
                 text = text.strip() + " </s>"

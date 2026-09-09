@@ -9,6 +9,11 @@ import torch
 
 from .llm2vec import LLM2Vec
 
+# Env override for the dense Llama weights used under the McGill LLM2Vec adapters.
+# Default (set in load_model.TEXT_ENCODER_PRESETS) is an ungated Llama-3 Instruct mirror.
+# Set to ``meta-llama/Meta-Llama-3-8B-Instruct`` once you have Meta HF access if preferred.
+LLM2VEC_LLM_BASE_ENV = "LLM2VEC_LLM_BASE"
+
 
 class LLM2VecEncoder:
     """LLM2Vec text embeddings."""
@@ -20,19 +25,26 @@ class LLM2VecEncoder:
         dtype: str,
         llm_dim: int,
         device: str = "auto",
+        llm_model_name_or_path: str | None = None,
     ) -> None:
         torch_dtype = getattr(torch, dtype)
         self.llm_dim = llm_dim
 
         cache_dir = os.environ.get("HUGGINGFACE_CACHE_DIR")
+        # Env wins over the preset so operators can switch mirrors without code edits.
+        llm_model_name_or_path = os.environ.get(LLM2VEC_LLM_BASE_ENV, llm_model_name_or_path)
 
         if "TEXT_ENCODERS_DIR" in os.environ:
-            base_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], base_model_name_or_path)
-            peft_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], peft_model_name_or_path)
+            encoders_dir = os.environ["TEXT_ENCODERS_DIR"]
+            base_model_name_or_path = os.path.join(encoders_dir, base_model_name_or_path)
+            peft_model_name_or_path = os.path.join(encoders_dir, peft_model_name_or_path)
+            if llm_model_name_or_path is not None:
+                llm_model_name_or_path = os.path.join(encoders_dir, llm_model_name_or_path)
 
         self.model = LLM2Vec.from_pretrained(
             base_model_name_or_path=base_model_name_or_path,
             peft_model_name_or_path=peft_model_name_or_path,
+            llm_model_name_or_path=llm_model_name_or_path,
             torch_dtype=torch_dtype,
             cache_dir=cache_dir,
         )
