@@ -2362,37 +2362,18 @@ class RootKeyframe2DSet(ConstraintSet):
                 self.server.scene.remove_by_name(self.line_segments.name)
                 self.line_segments = None
 
-    # TODO: accelerate interp1d. Note that np and torch interp gives different results, much less smooth
     def interpolate_path(self, t: np.ndarray):
         """Interpolates the path between the given frame indices.
 
         Args:
             t: np.ndarray, frame indices to interpolate at
         """
+        from ardy.root_path import interpolate_root_path
+
         cur_info = self._get_sparse_constraint_info()
-        frame_idx = cur_info["frame_idx"]
+        frame_idx = np.asarray(cur_info["frame_idx"])
         all_root_pos = cur_info["root_pos"]
-
-        x = all_root_pos[:, 0]
-        z = all_root_pos[:, 2]
-
-        kind = "linear"
-        # if self.smooth_path and len(frame_idx) >= 3:
-        # kind = "quadratic"
-
-        interp_x = interp1d(frame_idx, x, kind=kind)
-        interp_z = interp1d(frame_idx, z, kind=kind)
-
-        x_new = interp_x(t)
-        z_new = interp_z(t)
-
-        path3d = np.stack([x_new, np.zeros_like(x_new), z_new], axis=1)
-
-        if self.smooth_path and len(frame_idx) >= 3:
-            start_time = time.time()
-            path3d = get_smooth_root_pos(torch.from_numpy(path3d[None]))[0].numpy()
-            print(f"Time taken to smooth path: {time.time() - start_time} seconds")
-        return path3d
+        return interpolate_root_path(frame_idx, all_root_pos, t, smooth=self.smooth_path)
 
     def update_line_segments(self, frame_idx: int = 0):
         if len(self.keyframes) < 2:
