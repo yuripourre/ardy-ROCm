@@ -109,9 +109,9 @@ class GuiIOMixin:
                 success = self.download_motion_bvh(client_id, event.client)
                 if success:
                     event.client.add_notification(
-                        title="BVH Download Started",
-                        body="Check your browser downloads for the motion file.",
-                        auto_close_seconds=4.0,
+                        title="BVH Downloaded",
+                        body="Motion saved to your downloads folder.",
+                        auto_close_seconds=3.0,
                         color="green",
                     )
                 else:

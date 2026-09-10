@@ -265,7 +265,7 @@ class SessionIOMixin:
                 return False
 
             filename, content = payload
-            client.send_file_download(filename, content)
+            client.send_file_download(filename, content, save_immediately=True)
             print(f"[Download BVH] Sent {filename} to browser ({len(content)} bytes)")
             return True
         except Exception as e:
