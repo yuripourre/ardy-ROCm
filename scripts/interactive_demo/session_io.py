@@ -34,6 +34,24 @@ def _session_motion_tensors(session, character_index: int = 0):
     return local_rot_mats, root_positions
 
 
+def _motion_bvh_bytes(session, character_index: int = 0) -> tuple[str, bytes] | None:
+    """Encode session motion as BVH bytes for browser download."""
+    local_rot_mats, root_positions = _session_motion_tensors(session, character_index=character_index)
+    if local_rot_mats is None or root_positions is None:
+        return None
+
+    from ardy.exports.bvh import BvhExporter
+
+    bvh_text = BvhExporter(session.motion_rep.skeleton).to_bvh_text(
+        local_rot_mats,
+        root_positions,
+        session.model_fps,
+        character_index=0,
+    )
+    filename = f"motion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.bvh"
+    return filename, bvh_text.encode("utf-8")
+
+
 class SessionIOMixin:
     def export_session(self, client_id: int, filepath: str):
         """Export generated motion, text prompts, and constraints to a file using pickle."""
@@ -208,30 +226,50 @@ class SessionIOMixin:
             return False
 
     def export_motion_bvh(self, client_id: int, filepath: str, character_index: int = 0) -> bool:
-        """Export the current session motion to a BVH file."""
+        """Export the current session motion to a BVH file on the server."""
         if not self.client_active(client_id):
             return False
         session = self.client_sessions[client_id]
 
         try:
-            local_rot_mats, root_positions = _session_motion_tensors(session, character_index=character_index)
-            if local_rot_mats is None or root_positions is None:
+            payload = _motion_bvh_bytes(session, character_index=character_index)
+            if payload is None:
                 print("[Export BVH] No motion to export (load a model and generate motion first).")
                 return False
 
-            from ardy.exports.bvh import write_bvh
-
-            write_bvh(
-                filepath,
-                local_rot_mats,
-                root_positions,
-                fps=session.model_fps,
-                skeleton=session.motion_rep.skeleton,
-            )
-            print(f"[Export BVH] Saved motion to {filepath} ({local_rot_mats.shape[0]} frames)")
+            _, content = payload
+            parent = os.path.dirname(filepath)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(filepath, "wb") as f:
+                f.write(content)
+            print(f"[Export BVH] Saved motion to {filepath}")
             return True
         except Exception as e:
             print(f"[Export BVH] Error exporting motion: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return False
+
+    def download_motion_bvh(self, client_id: int, client, character_index: int = 0) -> bool:
+        """Send the current session motion to the Viser client as a BVH download."""
+        if not self.client_active(client_id):
+            return False
+        session = self.client_sessions[client_id]
+
+        try:
+            payload = _motion_bvh_bytes(session, character_index=character_index)
+            if payload is None:
+                print("[Download BVH] No motion to export (load a model and generate motion first).")
+                return False
+
+            filename, content = payload
+            client.send_file_download(filename, content)
+            print(f"[Download BVH] Sent {filename} to browser ({len(content)} bytes)")
+            return True
+        except Exception as e:
+            print(f"[Download BVH] Error sending motion: {e}")
             import traceback
 
             traceback.print_exc()

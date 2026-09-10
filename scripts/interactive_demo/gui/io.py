@@ -26,7 +26,14 @@ class GuiIOMixin:
                     "BVH File Path",
                     initial_value=f".cache/export/motion_{default_timestamp}.bvh",
                 )
-                g.gui_export_bvh_button = client.gui.add_button("Export Motion (BVH)")
+                g.gui_download_bvh_button = client.gui.add_button(
+                    "Download Motion (BVH)",
+                    hint="Save motion to your computer (works when using the UI remotely)",
+                )
+                g.gui_export_bvh_button = client.gui.add_button(
+                    "Export Motion to Server Path",
+                    hint="Write BVH to the server filesystem path below",
+                )
 
             # Root Constraints Group
             with client.gui.add_folder("Root Constraints", expand_by_default=True):
@@ -95,6 +102,26 @@ class GuiIOMixin:
                 )
                 g.gui_capture_viewport_button = client.gui.add_button("Capture Viewport Image")
 
+            @g.gui_download_bvh_button.on_click
+            def _(event: viser.GuiEvent) -> None:
+                if not event.client:
+                    return
+                success = self.download_motion_bvh(client_id, event.client)
+                if success:
+                    event.client.add_notification(
+                        title="BVH Download Started",
+                        body="Check your browser downloads for the motion file.",
+                        auto_close_seconds=4.0,
+                        color="green",
+                    )
+                else:
+                    event.client.add_notification(
+                        title="BVH Download Failed",
+                        body="Generate motion first, then try again.",
+                        auto_close_seconds=5.0,
+                        color="red",
+                    )
+
             @g.gui_export_bvh_button.on_click
             def _(event: viser.GuiEvent) -> None:
                 filepath = g.gui_bvh_file_path.value
@@ -103,7 +130,7 @@ class GuiIOMixin:
                     if success:
                         event.client.add_notification(
                             title="Motion Exported",
-                            body=f"Saved to {filepath}",
+                            body=f"Saved on server to {filepath}",
                             auto_close_seconds=3.0,
                             color="green",
                         )
