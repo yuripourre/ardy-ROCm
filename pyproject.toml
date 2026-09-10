@@ -61,8 +61,13 @@ trt = [
   "tensorrt-cu12==10.13.0.35",
   "onnx>=1.16",
 ]
+# Headless REST API (scripts/run_api_server.py)
+api = [
+  "fastapi>=0.100",
+  "uvicorn[standard]>=0.20",
+]
 all = [
-  "ardy[demo,trt]",
+  "ardy[demo,trt,api]",
 ]
 
 [tool.setuptools]
