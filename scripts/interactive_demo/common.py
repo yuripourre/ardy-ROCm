@@ -313,6 +313,7 @@ class ClientSession:
     frame_idx: int = -1
     max_frame_idx: int = -1
     target_animation_end_frame: Optional[int] = None
+    animation_limit_base_frame: int = 0
     playing: bool = False
     cur_time: float = -1.0
     playback_fps: int = 30

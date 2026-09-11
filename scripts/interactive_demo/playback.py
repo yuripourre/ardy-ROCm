@@ -31,6 +31,8 @@ class PlaybackMixin:
                 if session.frame_idx < session.max_frame_idx:
                     session.frame_idx += 1
                     self.set_frame(client_id, session.frame_idx)
+                else:
+                    self._set_playing(session, False)
 
             # Sleep to maintain target FPS (using model's native FPS)
             time_remaining = max(0, 1.0 / session.model_fps - (time.time() - last_update_time))
@@ -59,6 +61,34 @@ class PlaybackMixin:
             for session in self.client_sessions.values():
                 session.stop_playback = True
 
+    def _set_playing(self, session: ClientSession, playing: bool) -> None:
+        """Set playback state and keep Play/Pause plus step buttons in sync."""
+        session.playing = playing
+        gui = session.gui_elements
+        gui.gui_play_pause_button.label = "Pause" if playing else "Play"
+        if playing:
+            gui.gui_next_frame_button.disabled = True
+            gui.gui_prev_frame_button.disabled = True
+        else:
+            gui.gui_prev_frame_button.disabled = session.frame_idx <= 0
+            gui.gui_next_frame_button.disabled = session.frame_idx >= session.max_frame_idx
+
+    def _timeline_frame_range(self, session: ClientSession, frame_idx: int) -> tuple[int, int]:
+        """Visible timeline span: capped clip when Animation Frames is set, else rolling window."""
+        target_end = self._resolve_animation_end_frame(session)
+        if target_end is not None:
+            return 0, target_end
+        window_start = max(0, frame_idx - TIMELINE_WINDOW_BEFORE)
+        window_end = frame_idx + TIMELINE_WINDOW_AFTER
+        return window_start, window_end
+
+    def _prompt_end_frame(self, session: ClientSession) -> int:
+        """Prompt bar end: animation cap when set, otherwise unbounded."""
+        target_end = self._resolve_animation_end_frame(session)
+        if target_end is not None:
+            return target_end
+        return INFINITE_FRAME_IDX
+
     def step_frame(self, client_id: int, delta: int) -> None:
         """Step the playhead by ``delta`` frames, clamped to the motion range."""
         if not self.client_active(client_id):
@@ -69,6 +99,7 @@ class PlaybackMixin:
         new_frame = max(0, min(session.frame_idx + delta, session.max_frame_idx))
         if new_frame == session.frame_idx:
             return
+        self._set_playing(session, False)
         self.set_frame(client_id, new_frame)
         gui = session.gui_elements
         gui.gui_prev_frame_button.disabled = new_frame == 0
@@ -86,9 +117,7 @@ class PlaybackMixin:
         if not trigger_by_gui_timeline and hasattr(client, "timeline"):
             try:
                 client.timeline.set_current_frame(frame_idx)
-                # Set a rolling window: 20 frames before + 200 frames after current frame
-                window_start = max(0, frame_idx - TIMELINE_WINDOW_BEFORE)
-                window_end = frame_idx + TIMELINE_WINDOW_AFTER
+                window_start, window_end = self._timeline_frame_range(session, frame_idx)
                 client.timeline.set_frame_range(start_frame=window_start, end_frame=window_end)
             except (AttributeError, Exception) as e:
                 print(f"Could not update timeline frame: {e}")
@@ -100,7 +129,7 @@ class PlaybackMixin:
         # Check if approaching end of timeline
         thresh = session.gui_elements.gui_replan_trigger_thresh.value
         enable_auto_replan = session.gui_elements.gui_enable_auto_replan_checkbox.value
-        target_end = session.target_animation_end_frame
+        target_end = self._resolve_animation_end_frame(session)
         at_animation_limit = target_end is not None and session.max_frame_idx >= target_end
         if (
             not trigger_by_gui_timeline

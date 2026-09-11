@@ -3,38 +3,97 @@
 
 """Part of InteractiveTimelineDemo (split for readability)."""
 
+from ardy.motion_resample import resample_local_motion
+
 from .common import *  # noqa: F401,F403
 from .window_budget import compute_window_num_frames
 
 
 class GenerationMixin:
-    def _trim_session_motion_to_frame(self, session: ClientSession, max_frame_idx: int) -> None:
-        """Trim all motion buffers to ``[0, max_frame_idx]`` inclusive."""
-        end = max_frame_idx + 1
+    def _resolve_animation_end_frame(self, session: ClientSession) -> Optional[int]:
+        """Return the last allowed frame index when Animation Frames is set, else None."""
+        gui_frames = int(session.gui_elements.gui_constraint_num_frames.value)
+        if gui_frames > 0:
+            return session.animation_limit_base_frame + gui_frames - 1
+        return session.target_animation_end_frame
+
+    def _resample_session_motion_to_length(self, session: ClientSession, target_frames: int) -> None:
+        """Time-warp the full session clip to ``target_frames`` (SLERP + linear root)."""
+        if session.motion_tensor is None or session.motion_rep is None:
+            return
+        source_frames = session.motion_tensor.shape[1]
+        if source_frames == target_frames:
+            session.max_frame_idx = target_frames - 1
+            session.gui_elements.gui_frame_idx_input.max = session.max_frame_idx
+            return
+
+        inverse_out = session.motion_rep.inverse(session.motion_tensor, is_normalized=True)
+        local_rot_mats = inverse_out["local_rot_mats"]
+        root_positions = inverse_out["root_positions"]
+        num_samples = local_rot_mats.shape[0]
+        resampled_rots = []
+        resampled_roots = []
+        for sample_idx in range(num_samples):
+            rots, root = resample_local_motion(
+                local_rot_mats[sample_idx],
+                root_positions[sample_idx],
+                target_frames,
+            )
+            resampled_rots.append(rots)
+            resampled_roots.append(root)
+        local_rot_mats = torch.stack(resampled_rots, dim=0)
+        root_positions = torch.stack(resampled_roots, dim=0)
+        lengths = torch.full(
+            (num_samples,),
+            target_frames,
+            device=local_rot_mats.device,
+            dtype=torch.long,
+        )
+        feats_unnorm = session.motion_rep(
+            local_rot_mats,
+            root_positions,
+            to_normalize=False,
+            lengths=lengths,
+        )
+        feats_norm = session.motion_rep.normalize(feats_unnorm)
+        decoded = session.motion_rep.inverse(feats_unnorm, is_normalized=False)
+        joint_velocities = feats_unnorm[:, :, session.motion_rep.slice_dict["velocities"]]
+        joint_velocities = joint_velocities.reshape(
+            num_samples,
+            target_frames,
+            session.motion_rep.skeleton.nbjoints,
+            3,
+        )
+        root_velocities = joint_velocities[:, :, session.motion_rep.skeleton.root_idx, :]
+
         with session.motion_tensor_lock:
-            if session.motion_tensor is None or session.motion_tensor.shape[1] <= end:
-                if session.motion_tensor is not None:
-                    session.max_frame_idx = session.motion_tensor.shape[1] - 1
-                return
-            session.motion_tensor = session.motion_tensor[:, :end]
-            session.joints_pos = session.joints_pos[:, :end]
-            session.joints_rot = session.joints_rot[:, :end]
-            session.foot_contacts = session.foot_contacts[:, :end]
-            session.root_velocities = session.root_velocities[:, :end]
-            session.max_frame_idx = max_frame_idx
+            session.motion_tensor = feats_norm
+            session.joints_pos = decoded["posed_joints"]
+            session.joints_rot = decoded["global_rot_mats"]
+            session.foot_contacts = decoded["foot_contacts"]
+            session.root_velocities = root_velocities
+            session.max_frame_idx = target_frames - 1
         session.gui_elements.gui_frame_idx_input.max = session.max_frame_idx
+        print(f"Resampled generated motion from {source_frames} to {target_frames} frames")
 
     def _apply_animation_frame_limit(self, client_id: int, session: ClientSession) -> None:
-        """Trim generated motion and clamp playback when a frame limit is active."""
-        target_end = session.target_animation_end_frame
+        """Time-warp generated motion to the Animation Frames length and clamp the timeline."""
+        target_end = self._resolve_animation_end_frame(session)
         if target_end is None:
             return
-        if session.max_frame_idx > target_end:
-            self._trim_session_motion_to_frame(session, target_end)
+        target_frames = target_end + 1
+        if session.motion_tensor is not None and session.motion_tensor.shape[1] != target_frames:
+            self._resample_session_motion_to_length(session, target_frames)
         if session.frame_idx > target_end:
             self.set_frame(client_id, target_end)
+        elif hasattr(session.client, "timeline"):
+            try:
+                window_start, window_end = self._timeline_frame_range(session, session.frame_idx)
+                session.client.timeline.set_frame_range(start_frame=window_start, end_frame=window_end)
+            except (AttributeError, Exception):
+                pass
 
-    def restart(self, client_id: int, clear_animation_limit: bool = True):
+    def restart(self, client_id: int, clear_animation_limit: Optional[bool] = None):
         """Restart the demo for a client."""
         if not self.client_active(client_id):
             return
@@ -45,8 +104,11 @@ class GenerationMixin:
         self.clear_motions(client_id)
         session.max_frame_idx = -1
         session.frame_idx = 0
+        if clear_animation_limit is None:
+            clear_animation_limit = int(session.gui_elements.gui_constraint_num_frames.value) <= 0
         if clear_animation_limit:
             session.target_animation_end_frame = None
+            session.animation_limit_base_frame = 0
 
         # Reset camera state for smooth transitions
         session.camera_position = None
@@ -55,24 +117,25 @@ class GenerationMixin:
         session.camera_position_buffer.clear()
         session.camera_last_update_frame = -1
 
-        # Clear all timeline prompts and add current active prompt from frame 0 to infinity
+        # Clear all timeline prompts and add current active prompt
         self.clear_timeline_prompts(client_id)
 
         client = session.client
         if session.timeline_data is not None and hasattr(client, "timeline"):
-            # Add current active prompt from frame 0 to infinity
             prompt_uuid_list = session.timeline_data.get("prompt_uuid_list", [])
             current_prompt = session.gui_elements.gui_prompt_text.value
+            prompt_end = self._prompt_end_frame(session)
             try:
                 new_uuid = client.timeline.add_prompt(
                     text=current_prompt,
                     start_frame=0,
-                    end_frame=INFINITE_FRAME_IDX,
+                    end_frame=prompt_end,
                     color=self.get_prompt_color(0),
                 )
                 prompt_uuid_list.append(new_uuid)
                 session.timeline_data["prompt_counter"] = 1  # Reset counter
-                print(f"Added prompt for restart: '{current_prompt}' (frames 0-∞)")
+                end_label = "∞" if prompt_end == INFINITE_FRAME_IDX else prompt_end
+                print(f"Added prompt for restart: '{current_prompt}' (frames 0-{end_label})")
             except (AttributeError, Exception) as e:
                 print(f"Error adding prompt: {e}")
 
@@ -141,13 +204,15 @@ class GenerationMixin:
                 except Exception as e:
                     print(f"[Restart From Now] Error processing prompt: {e}")
 
-            # Extend the active prompt to infinity so generation continues with it
+            # Extend the active prompt so generation continues with it
             if active_uuid is not None:
                 try:
-                    client.timeline.update_prompt(active_uuid, end_frame=INFINITE_FRAME_IDX)
+                    prompt_end = self._prompt_end_frame(session)
+                    client.timeline.update_prompt(active_uuid, end_frame=prompt_end)
                     active_prompt = client.timeline._prompts.get(active_uuid)
                     if active_prompt:
-                        print(f"[Restart From Now] Extended prompt '{active_prompt.text}' to infinity")
+                        end_label = "∞" if prompt_end == INFINITE_FRAME_IDX else prompt_end
+                        print(f"[Restart From Now] Extended prompt '{active_prompt.text}' to {end_label}")
                 except Exception as e:
                     print(f"[Restart From Now] Error extending prompt: {e}")
 
@@ -215,7 +280,7 @@ class GenerationMixin:
             print(f"Model not loaded for client {client_id}!")
             return
 
-        target_end = session.target_animation_end_frame
+        target_end = self._resolve_animation_end_frame(session)
         if target_end is not None and session.max_frame_idx >= target_end:
             return
 

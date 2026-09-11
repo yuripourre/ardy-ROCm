@@ -607,13 +607,14 @@ class MotionIOMixin:
         )
 
         if constraint_num_frames > 0:
-            session.target_animation_end_frame = frame_offset + constraint_num_frames - 1
+            session.animation_limit_base_frame = frame_offset
         else:
+            session.animation_limit_base_frame = 0
             session.target_animation_end_frame = None
 
         # Only restart if not continuing from current frame
         if not continue_from_current:
-            self.restart(client_id, clear_animation_limit=False)
+            self.restart(client_id)
         else:
             # trigger replan
             self.on_replan_trigger(client_id)

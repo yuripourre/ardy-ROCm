@@ -41,10 +41,7 @@ class GuiPlaybackMixin:
                 if not self.client_active(client_id):
                     return
                 session = self.client_sessions[client_id]
-                session.playing = not session.playing
-                g.gui_play_pause_button.label = "Pause" if session.playing else "Play"
-                g.gui_next_frame_button.disabled = session.playing
-                g.gui_prev_frame_button.disabled = session.playing
+                self._set_playing(session, not session.playing)
 
             @g.gui_next_frame_button.on_click
             def _(_) -> None:

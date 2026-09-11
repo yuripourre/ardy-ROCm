@@ -177,7 +177,7 @@ class GuiMixin:
                 new_uuid = client.timeline.add_prompt(
                     text=text_prompt,
                     start_frame=0 if initial_prompt else next_frame,
-                    end_frame=INFINITE_FRAME_IDX,
+                    end_frame=self._prompt_end_frame(session),
                     color=prompt_color,
                 )
                 prompt_uuid_list.append(new_uuid)

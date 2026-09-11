@@ -341,14 +341,12 @@ class GuiIOMixin:
             if event.key == " ":
                 if not space_pressed[0]:
                     space_pressed[0] = True
-                    session.playing = not session.playing
-                    g.gui_play_pause_button.label = "Pause" if session.playing else "Play"
-                    g.gui_next_frame_button.disabled = session.playing
-                    g.gui_prev_frame_button.disabled = session.playing
+                    self._set_playing(session, not session.playing)
                 return
 
             elif event.key in ("ArrowLeft", "ArrowRight"):
-                step = FRAME_NAV_FAST_STEP if event.modifier == "cmd/ctrl" else 1
+                fast_nav = event.ctrl_key or event.meta_key
+                step = FRAME_NAV_FAST_STEP if fast_nav else 1
                 delta = -step if event.key == "ArrowLeft" else step
                 self.step_frame(client_id, delta)
                 return
