@@ -119,15 +119,17 @@ def append_cycle_blend_frames(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Append blend frames from last pose toward first, then drop the duplicate last.
 
-    Output length is ``T + blend_frames - 1`` where ``T`` is the input frame count.
+    Output length is ``T + blend_frames`` where ``T`` is the input frame count.
+    ``blend_frames`` is the number of closing frames to keep (``K``); interpolation
+    uses ``K + 1`` steps so the final duplicate of frame 0 can be dropped.
 
     Args:
         local_rot_mats: Local rotation matrices, shape ``[T, J, 3, 3]``.
         root_trans: Root translations, shape ``[T, 3]``.
-        blend_frames: Number of interpolated steps ``K`` (must be >= 1).
+        blend_frames: Number of closing frames to add ``K`` (must be >= 1).
 
     Returns:
-        Extended ``(local_rot_mats, root_trans)`` with shape ``[T + K - 1, ...]``.
+        Extended ``(local_rot_mats, root_trans)`` with shape ``[T + K, ...]``.
     """
     if blend_frames < 1:
         raise ValueError(f"blend_frames must be >= 1, got {blend_frames}")
@@ -143,8 +145,9 @@ def append_cycle_blend_frames(
 
     blend_rots = []
     blend_roots = []
-    for step_idx in range(1, blend_frames + 1):
-        alpha = step_idx / blend_frames
+    num_steps = blend_frames + 1
+    for step_idx in range(1, num_steps + 1):
+        alpha = step_idx / num_steps
         interp_rots, interp_root = interpolate_local_pose(
             rots_last, root_last, rots_first, root_first, alpha
         )

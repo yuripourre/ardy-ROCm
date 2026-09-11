@@ -78,13 +78,13 @@ def test_append_cycle_blend_frames_length():
     blend_frames = 4
     out_rots, out_root = append_cycle_blend_frames(local_rot_mats, root_trans, blend_frames)
 
-    expected_frames = 10 + blend_frames - 1
+    expected_frames = 10 + blend_frames
     assert out_rots.shape[0] == expected_frames
     assert out_root.shape[0] == expected_frames
     torch.testing.assert_close(out_rots[0], local_rot_mats[0], atol=1e-5, rtol=1e-5)
     torch.testing.assert_close(out_root[0], root_trans[0])
     last_blend_rots, _ = interpolate_local_pose(
-        local_rot_mats[-1], root_trans[-1], local_rot_mats[0], root_trans[0], 0.75
+        local_rot_mats[-1], root_trans[-1], local_rot_mats[0], root_trans[0], 0.8
     )
     torch.testing.assert_close(out_rots[-1], last_blend_rots, atol=1e-4, rtol=1e-4)
 
@@ -92,5 +92,16 @@ def test_append_cycle_blend_frames_length():
 def test_append_cycle_blend_frames_k_one():
     local_rot_mats, root_trans = _make_motion(10)
     out_rots, out_root = append_cycle_blend_frames(local_rot_mats, root_trans, 1)
-    assert out_rots.shape[0] == 10
-    assert out_root.shape[0] == 10
+    assert out_rots.shape[0] == 11
+    assert out_root.shape[0] == 11
+    last_blend_rots, _ = interpolate_local_pose(
+        local_rot_mats[-1], root_trans[-1], local_rot_mats[0], root_trans[0], 0.5
+    )
+    torch.testing.assert_close(out_rots[-1], last_blend_rots, atol=1e-4, rtol=1e-4)
+
+
+def test_append_cycle_blend_frames_k_two():
+    local_rot_mats, root_trans = _make_motion(10)
+    out_rots, out_root = append_cycle_blend_frames(local_rot_mats, root_trans, 2)
+    assert out_rots.shape[0] == 12
+    assert out_root.shape[0] == 12
