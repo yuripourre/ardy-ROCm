@@ -326,7 +326,7 @@ class GuiIOMixin:
             if event.event_type == "keyup":
                 if event.key == " ":
                     space_pressed[0] = False
-                elif event.key in ARROW_KEYS:
+                elif event.key in ("ArrowUp", "ArrowDown"):
                     arrow_keys_pressed.discard(event.key)
                     try:
                         # wait for 100ms before updating the timeline
@@ -347,8 +347,22 @@ class GuiIOMixin:
                     g.gui_prev_frame_button.disabled = session.playing
                 return
 
-            # Handle arrow keys for timeline visualization (not for navigation)
-            elif event.key in ARROW_KEYS:
+            elif event.key in ("ArrowLeft", "ArrowRight"):
+                step = FRAME_NAV_FAST_STEP if event.modifier == "cmd/ctrl" else 1
+                delta = -step if event.key == "ArrowLeft" else step
+                self.step_frame(client_id, delta)
+                return
+
+            elif event.key == "j":
+                self.rotate_target_velocity(client_id, -30.0)
+                return
+
+            elif event.key == "k":
+                self.rotate_target_velocity(client_id, 30.0)
+                return
+
+            # Up/down arrows: target velocity control and timeline overlay
+            elif event.key in ("ArrowUp", "ArrowDown"):
                 arrow_keys_pressed.add(event.key)
                 try:
                     session.client.timeline.set_highlighted_arrow_keys(sorted(arrow_keys_pressed))
@@ -356,23 +370,6 @@ class GuiIOMixin:
                     pass
                 self.on_arrow_key_press(client_id, arrow_keys_pressed)
                 return
-
-            # j/k keys: frame navigation (with fast OS repeat via debounce)
-            elif event.key == "j":
-                if session.frame_idx > 0:
-                    new_frame = session.frame_idx - 1
-                    self.set_frame(client_id, new_frame)
-                    g.gui_next_frame_button.disabled = False
-                    if new_frame == 0:
-                        g.gui_prev_frame_button.disabled = True
-
-            elif event.key == "k":
-                if session.frame_idx < session.max_frame_idx:
-                    new_frame = session.frame_idx + 1
-                    self.set_frame(client_id, new_frame)
-                    g.gui_prev_frame_button.disabled = False
-                    if new_frame == session.max_frame_idx:
-                        g.gui_next_frame_button.disabled = True
 
             elif event.key == "r":
                 # Reset/update camera to follow current frame (without smoothing)
@@ -482,7 +479,12 @@ class GuiIOMixin:
                     return
 
                 try:
-                    seq_data = self.load_motion_from_file(file_path, session, crop_10s=g.gui_crop_motion_checkbox.value)
+                    seq_data = self.load_motion_from_file(
+                        file_path,
+                        session,
+                        crop_10s=g.gui_crop_motion_checkbox.value,
+                        num_frames=int(g.gui_constraint_num_frames.value),
+                    )
                 except Exception as e:
                     client.add_notification(
                         title="Error loading motion",

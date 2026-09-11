@@ -596,6 +596,7 @@ class ConstraintsMixin:
             session.ref_character = None
         session.ref_joints_pos = None
         session.ref_joints_rot = None
+        session.target_animation_end_frame = None
 
         client.add_notification(
             title="Constraints cleared",

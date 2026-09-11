@@ -3,6 +3,8 @@
 
 """Part of InteractiveTimelineDemo (split for readability)."""
 
+from ardy.motion_resample import resample_local_motion
+
 from .common import *  # noqa: F401,F403
 
 
@@ -219,13 +221,20 @@ class MotionIOMixin:
         print(f"Cached motion to {cache_path}")
         return local_rot_mats, root_trans
 
-    def load_motion_from_file(self, file_path: str, session, crop_10s: bool = False) -> dict:
+    def load_motion_from_file(
+        self,
+        file_path: str,
+        session,
+        crop_10s: bool = False,
+        num_frames: int = 0,
+    ) -> dict:
         """Load a motion sequence from a BVH or CSV file and convert to motion_rep features.
 
         Args:
             file_path: Path to BVH (soma skeleton) or CSV (g1 skeleton) file.
             session: Client session with loaded model and motion_rep_infer.
-            crop_10s: If True, randomly crop the motion to 10 seconds.
+            crop_10s: If True, randomly crop the motion to 10 seconds when ``num_frames`` is 0.
+            num_frames: If > 0, resample the entire motion to this many frames (ignores ``crop_10s``).
 
         Returns:
             dict with "motion" (normalized feature tensor [T, D]) and "text" (empty string).
@@ -243,8 +252,10 @@ class MotionIOMixin:
         local_rot_mats = local_rot_mats.to(device=device, dtype=torch.float32)
         root_trans = root_trans.to(device=device, dtype=torch.float32)
 
-        # Optionally crop to 10 seconds
-        if crop_10s:
+        if num_frames > 0:
+            print(f"Resampling motion from {local_rot_mats.shape[0]} to {num_frames} frames")
+            local_rot_mats, root_trans = resample_local_motion(local_rot_mats, root_trans, num_frames)
+        elif crop_10s:
             max_frames = int(10.0 * fps)
             total_frames = local_rot_mats.shape[0]
             if total_frames > max_frames:
@@ -425,8 +436,9 @@ class MotionIOMixin:
                 self.clear_timeline_prompts(client_id)
                 self.on_text_prompt_update(client_id, trigger_replan=False, initial_prompt=True)
 
-        # Get max keyframes from GUI
+        # Get max keyframes and animation length from GUI
         max_keyframe_num = session.gui_elements.gui_max_keyframe_num.value
+        constraint_num_frames = int(session.gui_elements.gui_constraint_num_frames.value)
 
         # Determine sampling range based on continuation mode.
         # In continuation mode, don't sample constraints within the first 2 seconds
@@ -543,11 +555,18 @@ class MotionIOMixin:
 
             elif constraint_type == "2D Root Trajectory":
                 # Sample trajectory range
+                available_start = min_offset if continue_from_current else 0
                 if continue_from_current and motion_len < min_offset + 1:
                     start_idx = end_idx = motion_len - 1  # Degenerate trajectory
                     print(f"Continuous mode: trajectory too short, using last frame only")
+                elif constraint_num_frames > 0:
+                    start_idx = available_start
+                    end_idx = motion_len - 1
+                    print(
+                        f"Using full resampled trajectory from frame {start_idx} to {end_idx} "
+                        f"({end_idx - start_idx + 1} frames)"
+                    )
                 else:
-                    available_start = min_offset if continue_from_current else 0
                     max_traj_len = motion_len - available_start
                     traj_len = np.random.randint(1, max_traj_len + 1)
                     start_idx = np.random.randint(available_start, motion_len - traj_len + 1)
@@ -587,9 +606,14 @@ class MotionIOMixin:
             color="green",
         )
 
+        if constraint_num_frames > 0:
+            session.target_animation_end_frame = frame_offset + constraint_num_frames - 1
+        else:
+            session.target_animation_end_frame = None
+
         # Only restart if not continuing from current frame
         if not continue_from_current:
-            self.restart(client_id)
+            self.restart(client_id, clear_animation_limit=False)
         else:
             # trigger replan
             self.on_replan_trigger(client_id)

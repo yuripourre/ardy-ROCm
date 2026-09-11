@@ -8,7 +8,33 @@ from .window_budget import compute_window_num_frames
 
 
 class GenerationMixin:
-    def restart(self, client_id: int):
+    def _trim_session_motion_to_frame(self, session: ClientSession, max_frame_idx: int) -> None:
+        """Trim all motion buffers to ``[0, max_frame_idx]`` inclusive."""
+        end = max_frame_idx + 1
+        with session.motion_tensor_lock:
+            if session.motion_tensor is None or session.motion_tensor.shape[1] <= end:
+                if session.motion_tensor is not None:
+                    session.max_frame_idx = session.motion_tensor.shape[1] - 1
+                return
+            session.motion_tensor = session.motion_tensor[:, :end]
+            session.joints_pos = session.joints_pos[:, :end]
+            session.joints_rot = session.joints_rot[:, :end]
+            session.foot_contacts = session.foot_contacts[:, :end]
+            session.root_velocities = session.root_velocities[:, :end]
+            session.max_frame_idx = max_frame_idx
+        session.gui_elements.gui_frame_idx_input.max = session.max_frame_idx
+
+    def _apply_animation_frame_limit(self, client_id: int, session: ClientSession) -> None:
+        """Trim generated motion and clamp playback when a frame limit is active."""
+        target_end = session.target_animation_end_frame
+        if target_end is None:
+            return
+        if session.max_frame_idx > target_end:
+            self._trim_session_motion_to_frame(session, target_end)
+        if session.frame_idx > target_end:
+            self.set_frame(client_id, target_end)
+
+    def restart(self, client_id: int, clear_animation_limit: bool = True):
         """Restart the demo for a client."""
         if not self.client_active(client_id):
             return
@@ -19,6 +45,8 @@ class GenerationMixin:
         self.clear_motions(client_id)
         session.max_frame_idx = -1
         session.frame_idx = 0
+        if clear_animation_limit:
+            session.target_animation_end_frame = None
 
         # Reset camera state for smooth transitions
         session.camera_position = None
@@ -185,6 +213,10 @@ class GenerationMixin:
 
         if session.model is None:
             print(f"Model not loaded for client {client_id}!")
+            return
+
+        target_end = session.target_animation_end_frame
+        if target_end is not None and session.max_frame_idx >= target_end:
             return
 
         start_time = time.time()
@@ -399,6 +431,8 @@ class GenerationMixin:
 
             # Update timeline
             session.max_frame_idx = session.motion_tensor.shape[1] - 1
+
+        self._apply_animation_frame_limit(client_id, session)
 
         # Update frame index input max value
         session.gui_elements.gui_frame_idx_input.max = session.max_frame_idx

@@ -59,6 +59,21 @@ class PlaybackMixin:
             for session in self.client_sessions.values():
                 session.stop_playback = True
 
+    def step_frame(self, client_id: int, delta: int) -> None:
+        """Step the playhead by ``delta`` frames, clamped to the motion range."""
+        if not self.client_active(client_id):
+            return
+        session = self.client_sessions[client_id]
+        if session.max_frame_idx < 0:
+            return
+        new_frame = max(0, min(session.frame_idx + delta, session.max_frame_idx))
+        if new_frame == session.frame_idx:
+            return
+        self.set_frame(client_id, new_frame)
+        gui = session.gui_elements
+        gui.gui_prev_frame_button.disabled = new_frame == 0
+        gui.gui_next_frame_button.disabled = new_frame == session.max_frame_idx
+
     def set_frame(self, client_id: int, frame_idx: int, trigger_by_gui_timeline: bool = False):
         """Set the current frame for a client."""
         if not self.client_active(client_id):
@@ -85,7 +100,14 @@ class PlaybackMixin:
         # Check if approaching end of timeline
         thresh = session.gui_elements.gui_replan_trigger_thresh.value
         enable_auto_replan = session.gui_elements.gui_enable_auto_replan_checkbox.value
-        if not trigger_by_gui_timeline and enable_auto_replan and session.max_frame_idx - frame_idx <= thresh:
+        target_end = session.target_animation_end_frame
+        at_animation_limit = target_end is not None and session.max_frame_idx >= target_end
+        if (
+            not trigger_by_gui_timeline
+            and enable_auto_replan
+            and not at_animation_limit
+            and session.max_frame_idx - frame_idx <= thresh
+        ):
             # Cheap pre-check to avoid spawning a thread while a replan runs;
             # skip_if_busy makes the trigger drop atomically if another thread
             # won the race between this check and the lock acquisition.

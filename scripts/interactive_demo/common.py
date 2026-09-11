@@ -187,6 +187,7 @@ TIMELINE_WINDOW_BEFORE = 20
 TIMELINE_WINDOW_AFTER = 200
 
 ARROW_KEYS = {"ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"}
+FRAME_NAV_FAST_STEP = 10
 
 TARGET_VELOCITY_UPDATE_INTERVAL = 4
 TARGET_VELOCITY_GOAL_FRAME_INTERVAL = 10
@@ -246,6 +247,7 @@ class GuiElements:
     gui_scene_translation_z: viser.GuiInputHandle[float]
     gui_waypoint_interval: viser.GuiInputHandle[int]
     gui_max_keyframe_num: viser.GuiInputHandle[int]
+    gui_constraint_num_frames: viser.GuiInputHandle[int]
     gui_motion_file_path: viser.GuiInputHandle[str]
     gui_constraint_fullbody_checkbox: viser.GuiInputHandle[bool]
     gui_constraint_hands_checkbox: viser.GuiInputHandle[bool]
@@ -310,6 +312,7 @@ class ClientSession:
     # Playback state
     frame_idx: int = -1
     max_frame_idx: int = -1
+    target_animation_end_frame: Optional[int] = None
     playing: bool = False
     cur_time: float = -1.0
     playback_fps: int = 30

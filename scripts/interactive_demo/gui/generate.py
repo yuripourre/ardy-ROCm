@@ -116,7 +116,16 @@ class GuiGenerateMixin:
                 g.gui_crop_motion_checkbox = client.gui.add_checkbox(
                     "Crop to 10s",
                     initial_value=True,
-                    hint="Randomly crop loaded motion to 10 seconds",
+                    hint="Randomly crop loaded motion to 10 seconds (ignored when Animation Frames > 0)",
+                )
+
+                g.gui_constraint_num_frames = client.gui.add_number(
+                    "Animation Frames",
+                    initial_value=0,
+                    min=0,
+                    max=2000,
+                    step=1,
+                    hint="Resample the entire motion clip to this many frames (0 = no resample; ignores Crop to 10s when set)",
                 )
 
                 # Constraint type checkboxes
@@ -201,7 +210,10 @@ class GuiGenerateMixin:
 
                     try:
                         seq_data = self.load_motion_from_file(
-                            file_path, session, crop_10s=g.gui_crop_motion_checkbox.value
+                            file_path,
+                            session,
+                            crop_10s=g.gui_crop_motion_checkbox.value,
+                            num_frames=int(g.gui_constraint_num_frames.value),
                         )
                     except Exception as e:
                         if event.client:

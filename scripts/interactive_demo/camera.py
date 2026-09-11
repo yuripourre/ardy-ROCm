@@ -65,40 +65,6 @@ class CameraMixin:
                 color="blue",
             )
 
-        if "ArrowRight" in arrow_keys_pressed:
-            # Rotate 30 degrees clockwise around Y axis
-            angle_rad = np.radians(30)
-            cos_a = np.cos(angle_rad)
-            sin_a = np.sin(angle_rad)
-            # Rotation matrix around Y: [cos, -sin; sin, cos] for (x, z)
-            new_vel_x = cos_a * vel_x - sin_a * vel_z
-            new_vel_z = sin_a * vel_x + cos_a * vel_z
-            vel_x, vel_z = new_vel_x, new_vel_z
-            # send notification
-            self.client_sessions[client_id].client.add_notification(
-                title="Target velocity direction rotated clockwise by 30 degrees",
-                body="",
-                auto_close_seconds=3.0,
-                color="blue",
-            )
-
-        if "ArrowLeft" in arrow_keys_pressed:
-            # Rotate 30 degrees counterclockwise around Y axis
-            angle_rad = np.radians(-30)
-            cos_a = np.cos(angle_rad)
-            sin_a = np.sin(angle_rad)
-            # Rotation matrix around Y: [cos, -sin; sin, cos] for (x, z)
-            new_vel_x = cos_a * vel_x - sin_a * vel_z
-            new_vel_z = sin_a * vel_x + cos_a * vel_z
-            vel_x, vel_z = new_vel_x, new_vel_z
-            # send notification
-            self.client_sessions[client_id].client.add_notification(
-                title="Target velocity direction rotated counterclockwise by 30 degrees",
-                body="",
-                auto_close_seconds=3.0,
-                color="blue",
-            )
-
         # Clamp to GUI limits
         vel_x = np.clip(vel_x, -5.0, 5.0)
         vel_z = np.clip(vel_z, -5.0, 5.0)
@@ -107,6 +73,40 @@ class CameraMixin:
         gui_elements.gui_target_root_velocity.value = (vel_x, vel_z)
 
         # Trigger visual update (the on_update callback will handle the arrow update)
+
+    def rotate_target_velocity(self, client_id: int, degrees: float) -> None:
+        """Rotate target root velocity direction by ``degrees`` (when target velocity is enabled)."""
+        if not self.client_active(client_id):
+            return
+        session = self.client_sessions[client_id]
+        gui_elements = session.gui_elements
+
+        if not gui_elements.gui_use_target_velocity_checkbox.value:
+            return
+
+        current_vel = gui_elements.gui_target_root_velocity.value
+        vel_x, vel_z = current_vel[0], current_vel[1]
+        magnitude = np.sqrt(vel_x**2 + vel_z**2)
+        if magnitude < 1e-6:
+            return
+
+        angle_rad = np.radians(degrees)
+        cos_a = np.cos(angle_rad)
+        sin_a = np.sin(angle_rad)
+        new_vel_x = cos_a * vel_x - sin_a * vel_z
+        new_vel_z = sin_a * vel_x + cos_a * vel_z
+
+        vel_x = float(np.clip(new_vel_x, -5.0, 5.0))
+        vel_z = float(np.clip(new_vel_z, -5.0, 5.0))
+        gui_elements.gui_target_root_velocity.value = (vel_x, vel_z)
+
+        direction = "counterclockwise" if degrees < 0 else "clockwise"
+        session.client.add_notification(
+            title=f"Target velocity rotated {direction} by {abs(degrees):.0f} degrees",
+            body="",
+            auto_close_seconds=3.0,
+            color="blue",
+        )
 
     def update_camera_follow(self, client_id: int, frame_idx: int, use_smoothing: bool = True):
         """Update camera to follow the first character with selectable camera type.

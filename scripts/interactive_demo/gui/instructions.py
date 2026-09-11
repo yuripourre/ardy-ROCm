@@ -13,11 +13,12 @@ KEYBOARD_SHORTCUTS_MD = (
     "| Key | Action |\n"
     "|:---:|--------|\n"
     "| `Space` | Toggle play / pause |\n"
-    "| `j` | Previous frame |\n"
-    "| `k` | Next frame |\n"
+    "| `←` / `→` | Previous / next frame |\n"
+    "| `Ctrl+←` / `Ctrl+→` | Jump 10 frames back / forward |\n"
     "| `r` | Reset auto-follow camera to current frame |\n"
     "| `t` | Toggle target velocity (heading + arrow overlay) |\n"
-    "| `Arrow keys` | Steer target velocity (when `t` is enabled) |\n"
+    "| `↑` / `↓` | Adjust target velocity speed (when `t` is enabled) |\n"
+    "| `j` / `k` | Turn target velocity left / right (when `t` is enabled) |\n"
     "| `p` | Toggle waypoint control mode |\n"
     "| `z` | Sample kinematic constraints from motion file |\n"
     "| `h` | Show / hide this help |\n"
@@ -30,7 +31,7 @@ QUICK_START_MD = """
 Left-drag to rotate · right-drag to pan · scroll to zoom.
 
 ##### Playback
-`Space` plays/pauses · `j` / `k` step one frame back/forward.
+`Space` plays/pauses · `←` / `→` step one frame back/forward (`Ctrl` jumps 10).
 Motion is generated ahead of the playhead automatically while **Auto Replan** is on (Playback tab).
 
 ##### Text prompts
@@ -61,7 +62,7 @@ INSTRUCTIONS_TAB_MD = f"""### What is this demo?
 
     ### Playback
 
-    - `Space` play/pause, `j`/`k` step, or scrub via the timeline or **Frame Index**
+    - `Space` play/pause, `←`/`→` step (`Ctrl` jumps 10), or scrub via the timeline or **Frame Index**
       (Playback tab).
     - **Enable Auto Replan** keeps generating new motion as the playhead approaches the end
       of what exists. Turn it off to inspect a fixed clip.
@@ -78,8 +79,8 @@ INSTRUCTIONS_TAB_MD = f"""### What is this demo?
     - **Waypoints** (`p`): click the floor to drop a target the character will reach a bit
       later (see **Waypoint Interval** in the Generate tab). **Use Dense Root** makes it
       follow a smoothed dense path.
-    - **Target velocity** (`t`): drive the character like a gamepad — arrow keys change
-      speed and heading; the orange arrow shows the target.
+    - **Target velocity** (`t`): drive the character like a gamepad — `↑`/`↓` change
+      speed, `j`/`k` turn; the orange arrow shows the target.
 
     ### Constraints
 
