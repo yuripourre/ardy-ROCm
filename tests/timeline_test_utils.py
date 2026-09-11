@@ -9,6 +9,7 @@ from ardy.motion_resample import (
     resample_local_motion,
     resolve_prompt_source_span,
     resolve_resized_clip_length,
+    resolve_restart_from_now_keep_end,
 )
 
 
@@ -103,13 +104,29 @@ def apply_initial_animation_limit(
     return resample_local_motion(local_rot_mats, root_trans, target_frames)
 
 
+def trim_motion_before_rfn(
+    local_rot_mats: torch.Tensor,
+    root_trans: torch.Tensor,
+    current_frame: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Mirror ``restart_from_now`` prefix trim (keep playhead frame inclusive)."""
+    keep_end = resolve_restart_from_now_keep_end(current_frame)
+    return local_rot_mats[:keep_end], root_trans[:keep_end]
+
+
 def apply_rfn_tail_warp(
     local_rot_mats: torch.Tensor,
     root_trans: torch.Tensor,
     current_frame: int,
     gui_frames: int,
+    *,
+    trim_prefix: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, int]:
     """Mirror ``restart_from_now`` post-generation span resample."""
+    if trim_prefix:
+        local_rot_mats, root_trans = trim_motion_before_rfn(
+            local_rot_mats, root_trans, current_frame
+        )
     source_frames = local_rot_mats.shape[0]
     source_start, source_end = resolve_prompt_source_span(current_frame, source_frames, None)
     new_start = current_frame

@@ -64,23 +64,11 @@ class GuiPlaybackMixin:
 
             @g.gui_first_frame_button.on_click
             def _(_) -> None:
-                if not self.client_active(client_id):
-                    return
-                session = self.client_sessions[client_id]
-                if session.max_frame_idx < 0:
-                    return
-                self._set_playing(session, False)
-                self.set_frame(client_id, 0)
+                self.go_first_frame(client_id)
 
             @g.gui_last_frame_button.on_click
             def _(_) -> None:
-                if not self.client_active(client_id):
-                    return
-                session = self.client_sessions[client_id]
-                if session.max_frame_idx < 0:
-                    return
-                self._set_playing(session, False)
-                self.set_frame(client_id, self._clamp_playhead_frame(session, session.max_frame_idx))
+                self.go_last_frame(client_id)
 
         #
         # Text tab

@@ -231,6 +231,7 @@ class GuiElements:
     gui_cfg_text_weight: viser.GuiInputHandle[float]
     gui_cfg_constraint_weight: viser.GuiInputHandle[float]
     gui_prompt_text: viser.GuiInputHandle[str]
+    gui_generate_prompt_text: viser.GuiInputHandle[str]
     gui_active_prompt_label: viser.GuiInputHandle
     gui_seed: viser.GuiInputHandle[int]
     gui_randomize_seed_checkbox: viser.GuiInputHandle[bool]

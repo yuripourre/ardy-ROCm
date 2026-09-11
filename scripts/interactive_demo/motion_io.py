@@ -426,6 +426,7 @@ class MotionIOMixin:
         if update_text:
             text = seq_data["text"]
             session.gui_elements.gui_prompt_text.value = text
+            session.gui_elements.gui_generate_prompt_text.value = text
 
             # Handle timeline prompts based on continuation mode
             if continue_from_current:

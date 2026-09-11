@@ -28,6 +28,7 @@ class GuiTextMixin:
                         return
                     session = self.client_sessions[client_id]
                     session.gui_elements.gui_prompt_text.value = btn.label
+                    session.gui_elements.gui_generate_prompt_text.value = btn.label
                     threading.Thread(
                         target=self.on_text_prompt_update,
                         args=(client_id,),
@@ -41,6 +42,12 @@ class GuiTextMixin:
 
             @g.gui_update_text_button.on_click
             def _(_) -> None:
+                if not self.client_active(client_id):
+                    return
+                session = self.client_sessions[client_id]
+                session.gui_elements.gui_generate_prompt_text.value = (
+                    session.gui_elements.gui_prompt_text.value
+                )
                 threading.Thread(target=self.on_text_prompt_update, args=(client_id,), daemon=True).start()
 
         #

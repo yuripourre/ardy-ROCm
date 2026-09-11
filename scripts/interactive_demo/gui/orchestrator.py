@@ -185,6 +185,11 @@ class GuiMixin:
         session.timeline_data["prompt_counter"] = len(kept_uuids)
         self._sync_prompt_spans(session, client)
 
+    def _sync_generate_prompt_to_text_tab(self, session: ClientSession) -> None:
+        session.gui_elements.gui_prompt_text.value = (
+            session.gui_elements.gui_generate_prompt_text.value
+        )
+
     def on_text_prompt_update(
         self,
         client_id: int,

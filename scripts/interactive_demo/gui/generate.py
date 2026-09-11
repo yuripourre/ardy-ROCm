@@ -23,6 +23,12 @@ class GuiGenerateMixin:
                 hint="When checked, a new random seed is used on each Restart",
             )
 
+            g.gui_generate_prompt_text = client.gui.add_text(
+                "Prompt",
+                default_prompt,
+                hint="Applied when you click Restart or Restart From Now (no need to use Update Text Prompt).",
+            )
+
             g.gui_restart_button = client.gui.add_button("Restart", color="orange")
             g.gui_restart_from_now_button = client.gui.add_button(
                 "Restart From Now",

@@ -351,6 +351,14 @@ class GuiIOMixin:
                 self.step_frame(client_id, delta)
                 return
 
+            elif event.key == "Home":
+                self.go_first_frame(client_id)
+                return
+
+            elif event.key == "End":
+                self.go_last_frame(client_id)
+                return
+
             elif event.key == "j":
                 self.rotate_target_velocity(client_id, -30.0)
                 return

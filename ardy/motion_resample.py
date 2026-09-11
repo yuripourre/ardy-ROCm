@@ -160,6 +160,31 @@ def append_cycle_blend_frames(
     return extended_rots[:-1], extended_root[:-1]
 
 
+def resolve_next_prompt_start_from_spans(
+    prompt_spans: dict[str, tuple[int, int]],
+    resized_prompt_id: str,
+    old_start: int,
+    source_frames: int,
+    loop_uuid: str | None = None,
+) -> int | None:
+    """Next prompt start from stored spans before a resize sync.
+
+    Uses pre-resize ``prompt_spans``, not live timeline positions that may
+    already reflect a UI pack after dragging a bar.
+    """
+    next_start: int | None = None
+    for prompt_uuid, span in prompt_spans.items():
+        if prompt_uuid == resized_prompt_id or prompt_uuid == loop_uuid:
+            continue
+        start = int(span[0])
+        if start > old_start:
+            if next_start is None or start < next_start:
+                next_start = start
+    if next_start is not None and next_start >= source_frames:
+        return None
+    return next_start
+
+
 def resolve_prompt_source_span(
     old_start: int,
     source_frames: int,
@@ -267,3 +292,29 @@ def should_skip_generation_at_limit(
     if animation_end is None:
         return False
     return max_frame_idx >= animation_end
+
+
+def resolve_restart_from_now_keep_end(current_frame: int) -> int:
+    """Exclusive slice end when preserving motion before Restart From Now.
+
+    Keeps frames ``0..current_frame`` inclusive (the playhead pose).
+    """
+    return current_frame + 1
+
+
+def should_pause_playback_at_clip_end(
+    *,
+    at_clip_end: bool,
+    animation_end: int | None,
+    auto_replan: bool,
+) -> bool:
+    """Return True when playback should pause because the clip cannot grow further.
+
+    Unbounded clips with auto-replan stay playing at the current end while more
+    frames are generated. Capped clips (Animation Frames, resized bar) pause.
+    """
+    if not at_clip_end:
+        return False
+    if animation_end is not None:
+        return True
+    return not auto_replan

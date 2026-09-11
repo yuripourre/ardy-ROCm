@@ -14,6 +14,7 @@ KEYBOARD_SHORTCUTS_MD = (
     "|:---:|--------|\n"
     "| `Space` | Toggle play / pause |\n"
     "| `←` / `→` | Previous / next frame |\n"
+    "| `Home` / `End` | First / last frame |\n"
     "| `Ctrl+←` / `Ctrl+→` | Jump 10 frames back / forward |\n"
     "| `r` | Reset auto-follow camera to current frame |\n"
     "| `t` | Toggle target velocity (heading + arrow overlay) |\n"
@@ -31,7 +32,7 @@ QUICK_START_MD = """
 Left-drag to rotate · right-drag to pan · scroll to zoom.
 
 ##### Playback
-`Space` plays/pauses · `←` / `→` step one frame back/forward (`Ctrl` jumps 10).
+`Space` plays/pauses · `←` / `→` step one frame back/forward · `Home` / `End` first/last frame (`Ctrl`+arrows jumps 10).
 Motion is generated ahead of the playhead automatically while **Auto Replan** is on (Playback tab).
 
 ##### Text prompts
@@ -62,7 +63,7 @@ INSTRUCTIONS_TAB_MD = f"""### What is this demo?
 
     ### Playback
 
-    - `Space` play/pause, `←`/`→` step (`Ctrl` jumps 10), or scrub via the timeline or **Frame Index**
+    - `Space` play/pause, `←`/`→` step, `Home`/`End` first/last frame (`Ctrl` jumps 10), or scrub via the timeline or **Frame Index**
       (Playback tab).
     - **Enable Auto Replan** keeps generating new motion as the playhead approaches the end
       of what exists. Turn it off to inspect a fixed clip.
@@ -91,6 +92,8 @@ INSTRUCTIONS_TAB_MD = f"""### What is this demo?
       (Visualize tab) displays it as a red ghost.
     - **Initial Body Transform** (Generate tab): a gizmo to set the starting position and
       heading before restarting.
+    - **Prompt** on the Generate tab is applied automatically on **Restart** or
+      **Restart From Now** (no need to click Update Text Prompt on the Text tab).
     - **Restart** regenerates from scratch; **Restart From Now** keeps the past and
       regenerates the future; **Clear All Constraints** removes every keyframe and
       interval.

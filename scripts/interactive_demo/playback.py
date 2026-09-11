@@ -3,7 +3,7 @@
 
 """Part of InteractiveTimelineDemo (split for readability)."""
 
-from ardy.motion_resample import clamp_playhead_frame
+from ardy.motion_resample import clamp_playhead_frame, should_pause_playback_at_clip_end
 
 from .common import *  # noqa: F401,F403
 
@@ -36,11 +36,21 @@ class PlaybackMixin:
             # Update frame if playing
             if session.playing:
                 playback_end = self._clamp_playhead_frame(session, session.max_frame_idx)
-                if session.frame_idx < playback_end:
+                at_clip_end = session.frame_idx >= playback_end
+                effective_end = self._resolve_effective_end_frame(session)
+                auto_replan = session.gui_elements.gui_enable_auto_replan_checkbox.value
+                if not at_clip_end:
                     session.frame_idx += 1
                     self.set_frame(client_id, session.frame_idx)
-                else:
+                elif should_pause_playback_at_clip_end(
+                    at_clip_end=True,
+                    animation_end=effective_end,
+                    auto_replan=auto_replan,
+                ):
                     self._set_playing(session, False)
+                else:
+                    # Hold last frame; retrigger auto-replan while waiting for more motion.
+                    self.set_frame(client_id, session.frame_idx)
 
             # Sleep to maintain target FPS (using model's native FPS)
             time_remaining = max(0, 1.0 / session.model_fps - (time.time() - last_update_time))
@@ -258,6 +268,26 @@ class PlaybackMixin:
             return
         self._set_playing(session, False)
         self.set_frame(client_id, new_frame)
+
+    def go_first_frame(self, client_id: int) -> None:
+        """Jump to frame 0 (same as the First Frame button)."""
+        if not self.client_active(client_id):
+            return
+        session = self.client_sessions[client_id]
+        if session.max_frame_idx < 0:
+            return
+        self._set_playing(session, False)
+        self.set_frame(client_id, 0)
+
+    def go_last_frame(self, client_id: int) -> None:
+        """Jump to the last playable frame (same as the Last Frame button)."""
+        if not self.client_active(client_id):
+            return
+        session = self.client_sessions[client_id]
+        if session.max_frame_idx < 0:
+            return
+        self._set_playing(session, False)
+        self.set_frame(client_id, self._clamp_playhead_frame(session, session.max_frame_idx))
 
     def set_frame(self, client_id: int, frame_idx: int, trigger_by_gui_timeline: bool = False):
         """Set the current frame for a client."""

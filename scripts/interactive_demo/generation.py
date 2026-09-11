@@ -7,8 +7,10 @@ from ardy.motion_resample import (
     append_cycle_blend_frames,
     resample_local_motion,
     resolve_animation_end_frame,
+    resolve_next_prompt_start_from_spans,
     resolve_prompt_source_span,
     resolve_resized_clip_length,
+    resolve_restart_from_now_keep_end,
     should_skip_generation_at_limit,
 )
 
@@ -189,29 +191,6 @@ class GenerationMixin:
             root_positions[frame_idx].unsqueeze(0).expand(frame_count, -1).clone(),
         )
 
-    def _next_prompt_motion_start(
-        self,
-        session: ClientSession,
-        prompt_id: str,
-        prompt_start: int,
-        source_frames: int,
-    ) -> int:
-        """Exclusive end of this prompt's generated motion (next prompt, or clip end)."""
-        next_start = source_frames
-        client = session.client
-        if not hasattr(client, "timeline"):
-            return next_start
-        loop_uuid = None
-        if session.timeline_data is not None:
-            loop_uuid = session.timeline_data.get("loop_prompt_uuid")
-        for uuid, prompt in client.timeline._prompts.items():
-            if uuid == prompt_id or uuid == loop_uuid:
-                continue
-            start = int(prompt.start_frame)
-            if start > prompt_start:
-                next_start = min(next_start, start)
-        return next_start
-
     def _resample_session_motion_span(
         self,
         session: ClientSession,
@@ -243,10 +222,15 @@ class GenerationMixin:
         if source_frames < 1:
             return False
 
-        next_prompt_start = self._next_prompt_motion_start(
-            session, prompt_id, old_start, source_frames
+        prompt_spans: dict[str, tuple[int, int]] = {}
+        loop_uuid = None
+        if session.timeline_data is not None:
+            prompt_spans = session.timeline_data.get("prompt_spans", {})
+            loop_uuid = session.timeline_data.get("loop_prompt_uuid")
+        next_prompt_start = resolve_next_prompt_start_from_spans(
+            prompt_spans, prompt_id, old_start, source_frames, loop_uuid
         )
-        has_later_prompt = next_prompt_start < source_frames
+        has_later_prompt = next_prompt_start is not None
         source_start, source_end = resolve_prompt_source_span(
             old_start,
             source_frames,
@@ -693,6 +677,7 @@ class GenerationMixin:
         session.camera_last_update_frame = -1
 
         self.clear_timeline_prompts(client_id)
+        self._sync_generate_prompt_to_text_tab(session)
         self.on_text_prompt_update(
             client_id,
             trigger_replan=False,
@@ -728,8 +713,8 @@ class GenerationMixin:
         session.playing = False
 
         with session.replan_lock:
-            # Keep frames before the playhead; regenerate starting at current_frame.
-            keep_end = current_frame
+            # Keep frames through the playhead; regenerate starting at current_frame.
+            keep_end = resolve_restart_from_now_keep_end(current_frame)
             with session.motion_tensor_lock:
                 if session.motion_tensor is not None:
                     session.motion_tensor = session.motion_tensor[:, :keep_end]
@@ -742,7 +727,7 @@ class GenerationMixin:
                 if session.root_velocities is not None:
                     session.root_velocities = session.root_velocities[:, :keep_end]
 
-            session.max_frame_idx = keep_end - 1
+            session.max_frame_idx = current_frame
             session.gui_elements.gui_frame_idx_input.max = session.max_frame_idx
 
             if session.loop_content_frame_count is not None:
@@ -757,6 +742,7 @@ class GenerationMixin:
             if session.timeline_data is not None:
                 self._remove_loop_prompt_region(session, session.client)
 
+            self._sync_generate_prompt_to_text_tab(session)
             self.on_text_prompt_update(
                 client_id,
                 trigger_replan=False,
