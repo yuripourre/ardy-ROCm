@@ -5,6 +5,7 @@
 
 from ardy.assets import skeleton_asset_path
 
+from .accel import is_tensorrt_usable
 from .common import *  # noqa: F401,F403
 
 
@@ -223,6 +224,11 @@ class ModelLoadingMixin:
             orig_denoiser = model.denoiser
             try:
                 if compile_mode.startswith("ONNX-TRT"):
+                    if not is_tensorrt_usable():
+                        raise RuntimeError(
+                            "ONNX-TRT requires a working NVIDIA CUDA GPU and tensorrt; "
+                            "use None or torch.compile instead."
+                        )
                     engines_dir = os.path.join(model_dir, "engines")
                     # Max tokens formerly exposed via the (removed) "TRT Max Tokens"
                     # GUI control; the engine capacity is exactly the per-step

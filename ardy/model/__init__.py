@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """ARDY model package: main model class, text encoders, and loading utilities."""
 
+from ._torchvision_guard import disable_broken_torchvision
+
+disable_broken_torchvision()
+
 from .ardy_model import Ardy
 from .llm2vec import LLM2VecEncoder
 from .load_model import load_model

@@ -3,6 +3,8 @@
 
 """Part of InteractiveTimelineDemo (split for readability)."""
 
+from ardy.motion_resample import clamp_playhead_frame
+
 from .common import *  # noqa: F401,F403
 
 
@@ -100,14 +102,11 @@ class PlaybackMixin:
 
     def _clamp_playhead_frame(self, session: ClientSession, frame_idx: int) -> int:
         """Keep the playhead on a generated frame inside the active clip/bar."""
-        frame_idx = int(frame_idx)
-        if session.max_frame_idx < 0:
-            return max(0, frame_idx)
-        end_frame = session.max_frame_idx
-        effective_end = self._resolve_effective_end_frame(session)
-        if effective_end is not None:
-            end_frame = min(end_frame, effective_end)
-        return max(0, min(frame_idx, end_frame))
+        return clamp_playhead_frame(
+            frame_idx,
+            session.max_frame_idx,
+            self._resolve_effective_end_frame(session),
+        )
 
     def _apply_timeline_window(
         self,

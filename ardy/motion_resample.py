@@ -158,3 +158,112 @@ def append_cycle_blend_frames(
     extended_root = torch.cat([root_trans, torch.stack(blend_roots, dim=0)], dim=0)
 
     return extended_rots[:-1], extended_root[:-1]
+
+
+def resolve_prompt_source_span(
+    old_start: int,
+    source_frames: int,
+    next_prompt_start: int | None,
+) -> tuple[int, int]:
+    """Resolve motion span owned by a prompt, ignoring padded visual bar ends.
+
+    The visual timeline bar is often longer than generated motion (open-ended
+    padding). Source duration is the real motion owned by this prompt up to the
+    next prompt or clip end, never the padded ``old_end``.
+
+    Args:
+        old_start: Prompt start frame.
+        source_frames: Total frames in the motion clip.
+        next_prompt_start: Start frame of the next prompt, or ``None`` if last.
+
+    Returns:
+        ``(source_start, source_end)`` with exclusive ``source_end`` for slicing.
+    """
+    if source_frames < 1:
+        return 0, 0
+
+    source_start = max(0, min(old_start, source_frames))
+    if next_prompt_start is None:
+        source_end = source_frames
+    else:
+        source_end = max(source_start, min(next_prompt_start, source_frames))
+    return source_start, source_end
+
+
+def resolve_resized_clip_length(
+    source_frames: int,
+    source_start: int,
+    source_end: int,
+    new_start: int,
+    new_end: int,
+    has_later_prompt: bool,
+) -> int:
+    """Compute output clip length after resampling a prompt span.
+
+    Args:
+        source_frames: Original clip frame count.
+        source_start: Inclusive start of the prompt's source motion.
+        source_end: Exclusive end of the prompt's source motion.
+        new_start: New prompt bar start frame.
+        new_end: New prompt bar end frame.
+        has_later_prompt: Whether a later prompt exists after this one.
+
+    Returns:
+        Target clip frame count after concat (prefix + warped segment + suffix).
+    """
+    new_len = new_end - new_start
+    if not has_later_prompt:
+        return new_start + new_len
+
+    suffix_len = max(0, source_frames - source_end)
+    return new_start + new_len + suffix_len
+
+
+def resolve_animation_end_frame(
+    animation_limit_base_frame: int,
+    gui_frames: int,
+    target_animation_end_frame: int | None,
+) -> int | None:
+    """Return the last allowed frame index when Animation Frames is set, else stored cap."""
+    if gui_frames > 0:
+        return animation_limit_base_frame + gui_frames - 1
+    return target_animation_end_frame
+
+
+def resolve_effective_playback_end(
+    max_frame_idx: int,
+    animation_end: int | None,
+) -> int:
+    """Last playable frame index, respecting an optional animation cap."""
+    if max_frame_idx < 0:
+        return 0
+    end_frame = max_frame_idx
+    if animation_end is not None:
+        end_frame = min(end_frame, animation_end)
+    return end_frame
+
+
+def clamp_playhead_frame(
+    frame_idx: int,
+    max_frame_idx: int,
+    effective_end: int | None,
+) -> int:
+    """Clamp playhead to generated frames inside the active clip/bar."""
+    frame_idx = int(frame_idx)
+    if max_frame_idx < 0:
+        return max(0, frame_idx)
+    end_frame = resolve_effective_playback_end(max_frame_idx, effective_end)
+    return max(0, min(frame_idx, end_frame))
+
+
+def should_skip_generation_at_limit(
+    max_frame_idx: int,
+    animation_end: int | None,
+    skip_animation_frame_limit: bool,
+) -> bool:
+    """Return True when generation should stop because the animation cap is reached."""
+    if skip_animation_frame_limit:
+        return False
+    if animation_end is None:
+        return False
+    return max_frame_idx >= animation_end

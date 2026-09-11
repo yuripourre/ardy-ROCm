@@ -3,7 +3,14 @@
 
 """Part of InteractiveTimelineDemo (split for readability)."""
 
-from ardy.motion_resample import append_cycle_blend_frames, resample_local_motion
+from ardy.motion_resample import (
+    append_cycle_blend_frames,
+    resample_local_motion,
+    resolve_animation_end_frame,
+    resolve_prompt_source_span,
+    resolve_resized_clip_length,
+    should_skip_generation_at_limit,
+)
 
 from .common import *  # noqa: F401,F403
 from .window_budget import compute_window_num_frames
@@ -54,10 +61,11 @@ class GenerationMixin:
 
     def _resolve_animation_end_frame(self, session: ClientSession) -> Optional[int]:
         """Return the last allowed frame index when Animation Frames is set, else None."""
-        gui_frames = int(session.gui_elements.gui_constraint_num_frames.value)
-        if gui_frames > 0:
-            return session.animation_limit_base_frame + gui_frames - 1
-        return session.target_animation_end_frame
+        return resolve_animation_end_frame(
+            session.animation_limit_base_frame,
+            int(session.gui_elements.gui_constraint_num_frames.value),
+            session.target_animation_end_frame,
+        )
 
     def _resolve_effective_end_frame(self, session: ClientSession) -> Optional[int]:
         """Timeline/playback end frame, including loop blend extension when applied."""
@@ -235,9 +243,15 @@ class GenerationMixin:
         if source_frames < 1:
             return False
 
-        source_start = max(0, min(old_start, source_frames))
-        source_end = self._next_prompt_motion_start(session, prompt_id, old_start, source_frames)
-        source_end = max(source_start, min(source_end, source_frames))
+        next_prompt_start = self._next_prompt_motion_start(
+            session, prompt_id, old_start, source_frames
+        )
+        has_later_prompt = next_prompt_start < source_frames
+        source_start, source_end = resolve_prompt_source_span(
+            old_start,
+            source_frames,
+            next_prompt_start if has_later_prompt else None,
+        )
         source_len = source_end - source_start
 
         inverse_out = session.motion_rep.inverse(motion_snapshot, is_normalized=True)
@@ -294,14 +308,23 @@ class GenerationMixin:
             prefix_rots = torch.cat([prefix_rots, torch.stack(pad_rots, dim=0)], dim=1)
             prefix_roots = torch.cat([prefix_roots, torch.stack(pad_roots, dim=0)], dim=1)
 
-        suffix_rots = local_rot_mats[:, source_end:]
-        suffix_roots = root_positions[:, source_end:]
-        new_local_rot_mats = torch.cat([prefix_rots, segment_rots, suffix_rots], dim=1)
-        new_root_positions = torch.cat([prefix_roots, segment_roots, suffix_roots], dim=1)
-        target_frames = new_local_rot_mats.shape[1]
-        last_prompt_end = new_start + new_len
-        if suffix_rots.shape[1] == 0:
-            target_frames = last_prompt_end
+        if has_later_prompt:
+            suffix_rots = local_rot_mats[:, source_end:]
+            suffix_roots = root_positions[:, source_end:]
+            new_local_rot_mats = torch.cat([prefix_rots, segment_rots, suffix_rots], dim=1)
+            new_root_positions = torch.cat([prefix_roots, segment_roots, suffix_roots], dim=1)
+            target_frames = new_local_rot_mats.shape[1]
+        else:
+            new_local_rot_mats = torch.cat([prefix_rots, segment_rots], dim=1)
+            new_root_positions = torch.cat([prefix_roots, segment_roots], dim=1)
+            target_frames = resolve_resized_clip_length(
+                source_frames,
+                source_start,
+                source_end,
+                new_start,
+                new_end,
+                has_later_prompt=False,
+            )
             new_local_rot_mats = new_local_rot_mats[:, :target_frames]
             new_root_positions = new_root_positions[:, :target_frames]
 
@@ -622,9 +645,17 @@ class GenerationMixin:
             return
         target_frames = target_end + 1
         if session.motion_tensor is not None and session.motion_tensor.shape[1] != target_frames:
-            if session.animation_limit_base_frame > 0 and session.motion_tensor.shape[1] > target_frames:
-                # Segment cap after Restart From Now: keep the prefix, drop extra generated frames.
-                self._trim_session_motion_to_frame_count(session, target_frames)
+            base_frame = session.animation_limit_base_frame
+            if base_frame > 0:
+                source_frames = session.motion_tensor.shape[1]
+                self._resample_session_motion_span(
+                    session,
+                    "",
+                    base_frame,
+                    source_frames,
+                    base_frame,
+                    target_frames,
+                )
             else:
                 self._resample_session_motion_to_length(session, target_frames)
             session.loop_content_frame_count = None
@@ -696,44 +727,67 @@ class GenerationMixin:
         playing = session.playing
         session.playing = False
 
-        # Keep frames before the playhead; regenerate starting at current_frame.
-        keep_end = current_frame
-        with session.motion_tensor_lock:
-            if session.motion_tensor is not None:
-                session.motion_tensor = session.motion_tensor[:, :keep_end]
-            if session.joints_pos is not None:
-                session.joints_pos = session.joints_pos[:, :keep_end]
-            if session.joints_rot is not None:
-                session.joints_rot = session.joints_rot[:, :keep_end]
-            if session.foot_contacts is not None:
-                session.foot_contacts = session.foot_contacts[:, :keep_end]
-            if session.root_velocities is not None:
-                session.root_velocities = session.root_velocities[:, :keep_end]
+        with session.replan_lock:
+            # Keep frames before the playhead; regenerate starting at current_frame.
+            keep_end = current_frame
+            with session.motion_tensor_lock:
+                if session.motion_tensor is not None:
+                    session.motion_tensor = session.motion_tensor[:, :keep_end]
+                if session.joints_pos is not None:
+                    session.joints_pos = session.joints_pos[:, :keep_end]
+                if session.joints_rot is not None:
+                    session.joints_rot = session.joints_rot[:, :keep_end]
+                if session.foot_contacts is not None:
+                    session.foot_contacts = session.foot_contacts[:, :keep_end]
+                if session.root_velocities is not None:
+                    session.root_velocities = session.root_velocities[:, :keep_end]
 
-        session.max_frame_idx = keep_end - 1
-        session.gui_elements.gui_frame_idx_input.max = session.max_frame_idx
+            session.max_frame_idx = keep_end - 1
+            session.gui_elements.gui_frame_idx_input.max = session.max_frame_idx
 
-        if session.loop_content_frame_count is not None:
-            session.loop_content_frame_count = None
+            if session.loop_content_frame_count is not None:
+                session.loop_content_frame_count = None
 
-        gui_frames = int(session.gui_elements.gui_constraint_num_frames.value)
-        if gui_frames > 0:
-            session.animation_limit_base_frame = current_frame
+            session.target_animation_end_frame = None
+            if session.timeline_data is not None:
+                session.timeline_data["user_prompt_layout"] = False
 
-        if session.timeline_data is not None:
-            self._remove_loop_prompt_region(session, session.client)
+            self._remove_constraints_from_frame(client_id, current_frame)
 
-        self.on_text_prompt_update(
-            client_id,
-            trigger_replan=False,
-            show_notification=False,
-            segment_start_at_playhead=True,
-        )
-        self._refresh_timeline_display(client_id)
+            if session.timeline_data is not None:
+                self._remove_loop_prompt_region(session, session.client)
 
-        print(f"[Restart From Now] Cleared motion after frame {current_frame}, triggering generation")
+            self.on_text_prompt_update(
+                client_id,
+                trigger_replan=False,
+                show_notification=False,
+                segment_start_at_playhead=True,
+            )
 
-        self._generate_step(client_id)
+            print(f"[Restart From Now] Cleared motion after frame {current_frame}, triggering generation")
+
+            session.skip_animation_frame_limit = True
+            try:
+                self._generate_step(client_id)
+            finally:
+                session.skip_animation_frame_limit = False
+
+            gui_frames = int(session.gui_elements.gui_constraint_num_frames.value)
+            if gui_frames > 0 and session.motion_tensor is not None:
+                source_end = session.motion_tensor.shape[1]
+                self._resample_session_motion_span(
+                    session,
+                    "",
+                    current_frame,
+                    source_end,
+                    current_frame,
+                    current_frame + gui_frames,
+                )
+                session.animation_limit_base_frame = current_frame
+                session.target_animation_end_frame = current_frame + gui_frames - 1
+
+            self._refresh_timeline_display(client_id)
+            self.set_frame(client_id, current_frame)
 
         session.playing = playing
 
@@ -792,8 +846,11 @@ class GenerationMixin:
             print(f"Model not loaded for client {client_id}!")
             return
 
-        target_end = self._resolve_animation_end_frame(session)
-        if target_end is not None and session.max_frame_idx >= target_end:
+        if should_skip_generation_at_limit(
+            session.max_frame_idx,
+            self._resolve_animation_end_frame(session),
+            session.skip_animation_frame_limit,
+        ):
             return
 
         start_time = time.time()
@@ -1009,7 +1066,8 @@ class GenerationMixin:
             # Update timeline
             session.max_frame_idx = session.motion_tensor.shape[1] - 1
 
-        self._apply_animation_frame_limit(client_id, session)
+        if not session.skip_animation_frame_limit:
+            self._apply_animation_frame_limit(client_id, session)
 
         # Update frame index input max value
         session.gui_elements.gui_frame_idx_input.max = session.max_frame_idx

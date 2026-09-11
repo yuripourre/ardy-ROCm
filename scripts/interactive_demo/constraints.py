@@ -576,6 +576,58 @@ class ConstraintsMixin:
                 color="blue",
             )
 
+    def _constraint_type_from_track(self, session: ClientSession, track_id: str) -> str:
+        """Map a timeline track id to the session constraint type name."""
+        constraint_type = session.timeline_data["tracks"][track_id]["name"]
+        if constraint_type in [
+            "Left Hand",
+            "Right Hand",
+            "Left Foot",
+            "Right Foot",
+        ]:
+            return "End-Effectors"
+        return constraint_type
+
+    def _remove_constraints_from_frame(self, client_id: int, first_frame: int) -> None:
+        """Drop timeline constraints at or after ``first_frame``."""
+        if not self.client_active(client_id):
+            return
+        session = self.client_sessions[client_id]
+        if session.timeline_data is None:
+            return
+
+        with session.timeline_data["keyframe_update_lock"]:
+            for keyframe_id, keyframe_data in list(session.timeline_data.get("keyframes", {}).items()):
+                frame = int(keyframe_data["frame"])
+                if frame < first_frame:
+                    continue
+                track_id = keyframe_data["track_id"]
+                constraint_type = self._constraint_type_from_track(session, track_id)
+                self.remove_constraint_callback(
+                    client_id,
+                    keyframe_id,
+                    constraint_type,
+                    (frame, frame),
+                    verbose=False,
+                )
+                session.timeline_data["keyframes"].pop(keyframe_id, None)
+
+            for interval_id, interval_data in list(session.timeline_data.get("intervals", {}).items()):
+                start_frame = int(interval_data["start_frame_idx"])
+                end_frame = int(interval_data["end_frame_idx"])
+                if end_frame < first_frame:
+                    continue
+                track_id = interval_data["track_id"]
+                constraint_type = self._constraint_type_from_track(session, track_id)
+                self.remove_constraint_callback(
+                    client_id,
+                    interval_id,
+                    constraint_type,
+                    (start_frame, end_frame),
+                    verbose=False,
+                )
+                session.timeline_data["intervals"].pop(interval_id, None)
+
     def clear_constraints(self, client_id: int):
         """Clear all constraints for a client."""
         if not self.client_active(client_id):

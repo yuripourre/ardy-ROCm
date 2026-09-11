@@ -11,6 +11,7 @@ import argparse
 
 import torch
 
+from interactive_demo.accel import default_compile_model
 from interactive_demo.camera import CameraMixin
 from interactive_demo.characters import CharactersMixin
 from interactive_demo.client import ClientMixin
@@ -134,11 +135,6 @@ class InteractiveTimelineDemo(
         return self.prompt_colors[prompt_index % len(self.prompt_colors)]
 
 
-def _default_compile_model() -> bool:
-    """TensorRT is NVIDIA-only; on ROCm/HIP default to no acceleration so the demo starts cleanly."""
-    return not bool(getattr(torch.version, "hip", None))
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="ARDY Interactive Demo")
     parser.add_argument(
@@ -153,7 +149,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    compile_model = _default_compile_model()
+    compile_model = default_compile_model()
     if args.no_compile:
         compile_model = False
     elif args.compile:

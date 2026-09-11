@@ -3,6 +3,7 @@
 
 """Interactive-demo GUI: Model tab (split from create_gui)."""
 
+from ..accel import acceleration_options, initial_acceleration_mode
 from ..common import *  # noqa: F401,F403
 
 
@@ -69,17 +70,8 @@ class GuiModelMixin:
             def _(event: viser.GuiEvent) -> None:
                 _sync_chosen_model()
 
-            # TensorRT requires NVIDIA; on ROCm/HIP only None / torch.compile are useful.
-            _on_rocm = bool(getattr(torch.version, "hip", None))
-            _accel_options = (
-                ["None", "torch.compile"]
-                if _on_rocm
-                else ["None", "ONNX-TRT (fp16)", "ONNX-TRT (fp32)", "torch.compile"]
-            )
-            if self.compile_model:
-                _accel_initial = "torch.compile" if _on_rocm else "ONNX-TRT (fp16)"
-            else:
-                _accel_initial = "None"
+            _accel_options = acceleration_options()
+            _accel_initial = initial_acceleration_mode(self.compile_model)
             g.gui_compile_mode = client.gui.add_dropdown(
                 "Acceleration",
                 options=_accel_options,

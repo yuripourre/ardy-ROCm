@@ -16,4 +16,10 @@ fi
 # Use the discrete AMD GPU (skip the iGPU) when ROCm is available.
 export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
 
-exec python scripts/run_demo.py "$@"
+# CUDA PyTorch without a working NVIDIA GPU cannot build TensorRT engines (CUDA error 35).
+EXTRA_ARGS=()
+if ! python -c "import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+  EXTRA_ARGS+=(--no-compile)
+fi
+
+exec python scripts/run_demo.py "${EXTRA_ARGS[@]}" "$@"
