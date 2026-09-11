@@ -183,7 +183,6 @@ DARK_THEME = dict(
 )
 
 INFINITE_FRAME_IDX = 99999
-TIMELINE_WINDOW_BEFORE = 20
 TIMELINE_WINDOW_AFTER = 200
 
 ARROW_KEYS = {"ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"}
@@ -191,6 +190,7 @@ FRAME_NAV_FAST_STEP = 10
 DEFAULT_LOOP_BLEND_FRAMES = 4
 MIN_LOOP_BLEND_FRAMES = 1
 MAX_LOOP_BLEND_FRAMES = 60
+LOOP_TRANSITION_PROMPT_COLOR = (40, 140, 120)
 
 TARGET_VELOCITY_UPDATE_INTERVAL = 4
 TARGET_VELOCITY_GOAL_FRAME_INTERVAL = 10
@@ -215,6 +215,8 @@ class GuiElements:
     gui_play_pause_button: viser.GuiInputHandle
     gui_next_frame_button: viser.GuiInputHandle
     gui_prev_frame_button: viser.GuiInputHandle
+    gui_first_frame_button: viser.GuiInputHandle
+    gui_last_frame_button: viser.GuiInputHandle
     gui_actual_fps: viser.GuiInputHandle[float]
     gui_current_time: viser.GuiInputHandle[float]
     gui_compile_mode: viser.GuiInputHandle[str]
@@ -254,6 +256,8 @@ class GuiElements:
     gui_constraint_num_frames: viser.GuiInputHandle[int]
     gui_loop_cycle_checkbox: viser.GuiInputHandle[bool]
     gui_loop_blend_frames: viser.GuiInputHandle[int]
+    gui_model_loop_transition_checkbox: viser.GuiInputHandle[bool]
+    gui_apply_loop_button: viser.GuiInputHandle
     gui_motion_file_path: viser.GuiInputHandle[str]
     gui_constraint_fullbody_checkbox: viser.GuiInputHandle[bool]
     gui_constraint_hands_checkbox: viser.GuiInputHandle[bool]
@@ -320,6 +324,7 @@ class ClientSession:
     max_frame_idx: int = -1
     target_animation_end_frame: Optional[int] = None
     animation_limit_base_frame: int = 0
+    loop_content_frame_count: Optional[int] = None
     playing: bool = False
     cur_time: float = -1.0
     playback_fps: int = 30
@@ -351,6 +356,7 @@ class ClientSession:
     # Playback thread control
     playback_thread: Optional[threading.Thread] = None
     stop_playback: bool = False
+    pending_prompt_resize: Optional[str] = None
 
     # Hand orientation gizmos (dict of character_name -> dict of joint_name -> gizmo)
     hand_gizmos: dict = field(default_factory=dict)

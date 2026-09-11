@@ -56,47 +56,6 @@ class GuiGenerateMixin:
             def _(event: viser.GuiEvent) -> None:
                 self.clear_constraints(event.client.client_id)
 
-            # Initial Body Transform folder
-            with client.gui.add_folder("Initial Body Transform", expand_by_default=False):
-                g.gui_show_transform_gizmo_checkbox = client.gui.add_checkbox(
-                    "Show Transform Gizmo",
-                    initial_value=False,
-                    hint="Show/hide the transform control gizmo for initial body pose",
-                )
-                g.gui_reset_transform_button = client.gui.add_button("Reset Transform")
-
-                @g.gui_show_transform_gizmo_checkbox.on_update
-                def _(_) -> None:
-                    if not self.client_active(client_id):
-                        return
-                    session = self.client_sessions[client_id]
-                    if session.transform_gizmo is not None:
-                        session.transform_gizmo.visible = g.gui_show_transform_gizmo_checkbox.value
-
-                @g.gui_reset_transform_button.on_click
-                def _(_) -> None:
-                    if not self.client_active(client_id):
-                        return
-                    session = self.client_sessions[client_id]
-
-                    # Reset to origin and zero heading. Must stay a numpy array:
-                    # the fresh-generation path feeds it to torch.from_numpy.
-                    session.init_global_translation = np.zeros(3, dtype=np.float32)
-                    session.init_first_heading_angle = 0.0
-
-                    # Update gizmo position
-                    if session.transform_gizmo is not None:
-                        session.transform_gizmo.position = (0.0, 0.0, 0.0)
-                        session.transform_gizmo.wxyz = viser.transforms.SO3.from_y_radians(0.0).wxyz
-
-                    self._update_start_direction_marker(client_id)
-
-                    client.add_notification(
-                        title="Transform Reset",
-                        body="Initial body transform reset to origin",
-                        auto_close_seconds=2.0,
-                    )
-
             # Constraints and Keyframe loading from file
             with client.gui.add_folder("Constraints", expand_by_default=False):
                 # Motion file path for constraint loading
@@ -147,12 +106,6 @@ class GuiGenerateMixin:
                             auto_close_seconds=2.0,
                         )
 
-                g.gui_crop_motion_checkbox = client.gui.add_checkbox(
-                    "Crop to 10s",
-                    initial_value=True,
-                    hint="Randomly crop loaded motion to 10 seconds (ignored when Animation Frames > 0)",
-                )
-
                 g.gui_constraint_num_frames = client.gui.add_number(
                     "Animation Frames",
                     initial_value=0,
@@ -161,40 +114,6 @@ class GuiGenerateMixin:
                     step=1,
                     hint="Resample the entire motion clip to this many frames (0 = no resample; ignores Crop to 10s when set)",
                 )
-
-                g.gui_loop_cycle_checkbox = client.gui.add_checkbox(
-                    "Loop Cycle",
-                    initial_value=False,
-                    disabled=True,
-                    hint="Enabled when Animation Frames is set. Always appends Loop Blend Frames from the last pose toward the first.",
-                )
-                g.gui_loop_blend_frames = client.gui.add_number(
-                    "Loop Blend Frames",
-                    initial_value=DEFAULT_LOOP_BLEND_FRAMES,
-                    min=MIN_LOOP_BLEND_FRAMES,
-                    max=MAX_LOOP_BLEND_FRAMES,
-                    step=1,
-                    disabled=True,
-                    hint="Interpolated frames from last pose toward first when Loop Cycle is on",
-                )
-
-                def _sync_loop_cycle_controls() -> None:
-                    has_frames = int(g.gui_constraint_num_frames.value) > 0
-                    if not has_frames:
-                        g.gui_loop_cycle_checkbox.value = False
-                        g.gui_loop_cycle_checkbox.disabled = True
-                        g.gui_loop_blend_frames.disabled = True
-                    else:
-                        g.gui_loop_cycle_checkbox.disabled = False
-                        g.gui_loop_blend_frames.disabled = not g.gui_loop_cycle_checkbox.value
-
-                @g.gui_constraint_num_frames.on_update
-                def _(_) -> None:
-                    _sync_loop_cycle_controls()
-
-                @g.gui_loop_cycle_checkbox.on_update
-                def _(_) -> None:
-                    _sync_loop_cycle_controls()
 
                 # Constraint type checkboxes
                 g.gui_constraint_fullbody_checkbox = client.gui.add_checkbox("Full Body", initial_value=True)
@@ -221,6 +140,12 @@ class GuiGenerateMixin:
                     "Continue from Current Frame",
                     initial_value=False,
                     hint="If enabled, transform loaded sequence to continue from current position and heading",
+                )
+
+                g.gui_crop_motion_checkbox = client.gui.add_checkbox(
+                    "Crop to 10s",
+                    initial_value=True,
+                    hint="Randomly crop loaded motion to 10 seconds (ignored when Animation Frames > 0)",
                 )
 
                 g.gui_load_seq_button = client.gui.add_button("Sample Constraints", color="green")
@@ -338,6 +263,99 @@ class GuiGenerateMixin:
                             auto_close_seconds=3.0,
                             color="green",
                         )
+
+            with client.gui.add_folder("Loop", expand_by_default=False):
+                g.gui_loop_cycle_checkbox = client.gui.add_checkbox(
+                    "Loop Cycle",
+                    initial_value=False,
+                    hint="Appends closing frames from the last pose toward the first (SLERP or model-generated). Use Generate Loop to close the clip.",
+                )
+                g.gui_loop_blend_frames = client.gui.add_number(
+                    "Loop Blend Frames",
+                    initial_value=DEFAULT_LOOP_BLEND_FRAMES,
+                    min=MIN_LOOP_BLEND_FRAMES,
+                    max=MAX_LOOP_BLEND_FRAMES,
+                    step=1,
+                    disabled=True,
+                    hint="Number of closing frames added to the clip when Generate Loop is clicked",
+                )
+                g.gui_model_loop_transition_checkbox = client.gui.add_checkbox(
+                    "Generate Loop Transition with Model",
+                    initial_value=False,
+                    disabled=True,
+                    hint="When checked, the model generates closing frames toward the first pose. When unchecked, SLERP interpolation is used.",
+                )
+                g.gui_apply_loop_button = client.gui.add_button(
+                    "Generate Loop",
+                    color="green",
+                    disabled=True,
+                    hint="Generate loop closing frames from the last pose toward the first. Uses Animation Frames as N when set, otherwise the full current clip.",
+                )
+
+                @g.gui_loop_cycle_checkbox.on_update
+                def _(_) -> None:
+                    self.sync_loop_gui_controls(client_id)
+
+                @g.gui_apply_loop_button.on_click
+                def _(event: viser.GuiEvent) -> None:
+                    if not self.client_active(client_id):
+                        return
+                    self.apply_loop_cycle(client_id)
+                    if event.client:
+                        session = self.client_sessions[client_id]
+                        content_frames = session.loop_content_frame_count or 0
+                        blend_frames = self._resolve_loop_blend_frames(session)
+                        loop_start = content_frames
+                        loop_end = content_frames + blend_frames - 1 if blend_frames > 0 else loop_start
+                        event.client.add_notification(
+                            title="Loop Generated",
+                            body=(
+                                f"Content: {content_frames} frames, "
+                                f"loop transition: frames {loop_start}–{loop_end}."
+                            ),
+                            auto_close_seconds=3.0,
+                            color="green",
+                        )
+
+            with client.gui.add_folder("Initial Body Transform", expand_by_default=False):
+                g.gui_show_transform_gizmo_checkbox = client.gui.add_checkbox(
+                    "Show Transform Gizmo",
+                    initial_value=False,
+                    hint="Show/hide the transform control gizmo for initial body pose",
+                )
+                g.gui_reset_transform_button = client.gui.add_button("Reset Transform")
+
+                @g.gui_show_transform_gizmo_checkbox.on_update
+                def _(_) -> None:
+                    if not self.client_active(client_id):
+                        return
+                    session = self.client_sessions[client_id]
+                    if session.transform_gizmo is not None:
+                        session.transform_gizmo.visible = g.gui_show_transform_gizmo_checkbox.value
+
+                @g.gui_reset_transform_button.on_click
+                def _(_) -> None:
+                    if not self.client_active(client_id):
+                        return
+                    session = self.client_sessions[client_id]
+
+                    # Reset to origin and zero heading. Must stay a numpy array:
+                    # the fresh-generation path feeds it to torch.from_numpy.
+                    session.init_global_translation = np.zeros(3, dtype=np.float32)
+                    session.init_first_heading_angle = 0.0
+
+                    # Update gizmo position
+                    if session.transform_gizmo is not None:
+                        session.transform_gizmo.position = (0.0, 0.0, 0.0)
+                        session.transform_gizmo.wxyz = viser.transforms.SO3.from_y_radians(0.0).wxyz
+
+                    self._update_start_direction_marker(client_id)
+
+                    client.add_notification(
+                        title="Transform Reset",
+                        body="Initial body transform reset to origin",
+                        auto_close_seconds=2.0,
+                    )
 
             # Waypoint controls
             with client.gui.add_folder("Waypoint", expand_by_default=False):

@@ -614,6 +614,8 @@ class ConstraintsMixin:
         client = session.client
 
         if session.timeline_data is not None and hasattr(client, "timeline"):
+            self._remove_loop_prompt_region(session, client)
+
             prompt_uuid_list = session.timeline_data.get("prompt_uuid_list", [])
             for prompt_uuid in prompt_uuid_list:
                 try:
@@ -624,3 +626,5 @@ class ConstraintsMixin:
 
             # Clear the prompt list
             prompt_uuid_list.clear()
+            session.timeline_data["prompt_spans"] = {}
+            session.timeline_data["user_prompt_layout"] = False

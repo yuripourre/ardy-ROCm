@@ -29,7 +29,7 @@ class GuiMixin:
                 uuid = timeline.add_prompt(
                     text=default_prompt,
                     start_frame=0,
-                    end_frame=INFINITE_FRAME_IDX,
+                    end_frame=TIMELINE_WINDOW_AFTER,
                     color=self.get_prompt_color(0),
                 )
                 timeline.set_visible(True)
@@ -110,6 +110,10 @@ class GuiMixin:
             "pending_keyframe_moves": {},
             "prompt_uuid_list": [uuid] if uuid is not None else [],
             "prompt_counter": 1,  # Counter for prompt colors (starts at 1 since initial prompt is 0)
+            "prompt_spans": {uuid: (0, TIMELINE_WINDOW_AFTER)} if uuid is not None else {},
+            "user_prompt_layout": False,
+            "loop_prompt_uuid": None,
+            "visible_frame_range": None,
         }
 
         # Active prompt label
@@ -136,7 +140,59 @@ class GuiMixin:
         gui_elements = GuiElements(**{f: getattr(g, f) for f in GuiElements.__dataclass_fields__})
         return gui_elements, timeline_tracks, timeline_data
 
-    def on_text_prompt_update(self, client_id: int, trigger_replan: bool = True, initial_prompt: bool = False):
+    def _close_timeline_prompts_before_frame(
+        self,
+        session: ClientSession,
+        client: viser.ClientHandle,
+        first_new_frame: int,
+    ) -> None:
+        """Clamp prompts so they end before ``first_new_frame``; drop 0- and 1-frame stubs."""
+        if session.timeline_data is None or not hasattr(client, "timeline"):
+            return
+
+        prior_end = first_new_frame - 1
+        prompt_uuid_list = session.timeline_data.get("prompt_uuid_list", [])
+        kept_uuids = []
+        for prompt_uuid in prompt_uuid_list:
+            try:
+                prompt = client.timeline._prompts.get(prompt_uuid)
+                if prompt is None:
+                    continue
+                if prompt.start_frame >= first_new_frame or prior_end < 0:
+                    client.timeline.remove_prompt(prompt_uuid)
+                    print(
+                        f"Removed prompt '{prompt.text}' (start={prompt.start_frame}) "
+                        f"before new region at frame {first_new_frame}"
+                    )
+                    continue
+                new_end = min(int(prompt.end_frame), prior_end)
+                # Inclusive span of 1 frame (start == end) is a stub — don't keep it.
+                if new_end <= prompt.start_frame:
+                    client.timeline.remove_prompt(prompt_uuid)
+                    print(
+                        f"Removed 1-frame prompt stub '{prompt.text}' "
+                        f"({prompt.start_frame}-{new_end})"
+                    )
+                    continue
+                if new_end != prompt.end_frame:
+                    client.timeline.update_prompt(prompt_uuid, end_frame=new_end)
+                    print(f"Updated prompt '{prompt_uuid}' to end at frame {new_end}")
+                kept_uuids.append(prompt_uuid)
+            except Exception as e:
+                print(f"Could not close prompt before frame {first_new_frame}: {e}")
+
+        session.timeline_data["prompt_uuid_list"] = kept_uuids
+        session.timeline_data["prompt_counter"] = len(kept_uuids)
+        self._sync_prompt_spans(session, client)
+
+    def on_text_prompt_update(
+        self,
+        client_id: int,
+        trigger_replan: bool = True,
+        initial_prompt: bool = False,
+        show_notification: bool = True,
+        segment_start_at_playhead: bool = False,
+    ):
         """Update text embedding when prompt changes and update timeline prompts."""
         start_time = time.time()
         if not self.client_active(client_id):
@@ -153,47 +209,45 @@ class GuiMixin:
 
         session.gui_elements.gui_active_prompt_label.content = f"**Active Prompt:** {text_prompt}"
 
-        # Update timeline prompts
         current_frame = max(0, session.frame_idx)
-        next_frame = current_frame + 1
+        if segment_start_at_playhead:
+            new_segment_start = current_frame
+        elif initial_prompt:
+            new_segment_start = 0
+        else:
+            new_segment_start = current_frame + 1
 
         if session.timeline_data is not None and hasattr(client, "timeline"):
+            if segment_start_at_playhead or not initial_prompt:
+                self._close_timeline_prompts_before_frame(session, client, new_segment_start)
             prompt_uuid_list = session.timeline_data.get("prompt_uuid_list", [])
-
-            # Update the last prompt to end at current frame
-            if len(prompt_uuid_list) > 0:
-                last_uuid = prompt_uuid_list[-1]
-                try:
-                    client.timeline.update_prompt(last_uuid, end_frame=current_frame)
-                    print(f"Updated prompt '{last_uuid}' to end at frame {current_frame}")
-                except (AttributeError, Exception) as e:
-                    print(f"Could not update prompt end frame: {e}")
-
-            # Add new prompt starting from next frame with unique color
             try:
                 prompt_counter = session.timeline_data.get("prompt_counter", 1)
                 prompt_color = self.get_prompt_color(prompt_counter)
 
                 new_uuid = client.timeline.add_prompt(
                     text=text_prompt,
-                    start_frame=0 if initial_prompt else next_frame,
+                    start_frame=new_segment_start,
                     end_frame=self._prompt_end_frame(session),
                     color=prompt_color,
                 )
                 prompt_uuid_list.append(new_uuid)
                 session.timeline_data["prompt_counter"] = prompt_counter + 1
+                self._sync_prompt_spans(session, client)
                 print(
-                    f"Added new prompt '{new_uuid}' starting at frame {next_frame}: '{text_prompt}' (color: {prompt_color})"
+                    f"Added new prompt '{new_uuid}' starting at frame {new_segment_start}: "
+                    f"'{text_prompt}' (color: {prompt_color})"
                 )
             except (AttributeError, Exception) as e:
                 print(f"Could not add new prompt to timeline: {e}")
 
-        session.client.add_notification(
-            title="Text prompt updated",
-            body=f"New prompt starts at frame {next_frame}",
-            auto_close_seconds=3.0,
-            color="blue",
-        )
+        if show_notification:
+            session.client.add_notification(
+                title="Text prompt updated",
+                body=f"New prompt starts at frame {new_segment_start}",
+                auto_close_seconds=3.0,
+                color="blue",
+            )
 
         end_time = time.time()
         print(f"Time taken to update text prompt: {end_time - start_time} seconds")

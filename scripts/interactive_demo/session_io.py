@@ -550,6 +550,7 @@ class SessionIOMixin:
                             print(f"[Load] Warning: Failed to add prompt to timeline: {e}")
                     session.timeline_data["prompt_uuid_list"] = prompt_uuid_list
                     session.timeline_data["prompt_counter"] = len(prompt_uuid_list)
+                    self._sync_prompt_spans(session, client)
                     print(f"[Load] Loaded {len(prompt_uuid_list)} prompts to timeline")
                 # Fallback to old single prompt format
                 elif "prompt" in import_data:
@@ -561,6 +562,7 @@ class SessionIOMixin:
                             color=self.get_prompt_color(0),
                         )
                         session.timeline_data["prompt_uuid_list"].append(prompt_uuid)
+                        self._sync_prompt_spans(session, client)
                         print(f"[Load] Added prompt to timeline: '{import_data['prompt']['text']}'")
                     except Exception as e:
                         print(f"[Load] Warning: Failed to add prompt to timeline: {e}")
