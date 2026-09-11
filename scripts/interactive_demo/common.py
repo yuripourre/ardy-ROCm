@@ -358,6 +358,7 @@ class ClientSession:
     playback_thread: Optional[threading.Thread] = None
     stop_playback: bool = False
     pending_prompt_resize: Optional[str] = None
+    pending_prompt_delete: Optional[str] = None
     skip_animation_frame_limit: bool = False
 
     # Hand orientation gizmos (dict of character_name -> dict of joint_name -> gizmo)

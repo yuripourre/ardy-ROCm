@@ -10,6 +10,7 @@ from ardy.motion_resample import (
     resolve_next_prompt_start_from_spans,
     resolve_prompt_source_span,
     resolve_resized_clip_length,
+    resolve_playhead_after_delete,
     resolve_restart_from_now_generate_start,
     resolve_restart_from_now_keep_end,
     resolve_restart_prompt_text,
@@ -387,6 +388,128 @@ class GenerationMixin:
             self._refresh_timeline_display(client_id)
             self.set_frame(client_id, min(session.frame_idx, clip_last_frame))
             self.sync_loop_gui_controls(client_id)
+
+    def _delete_session_motion_frames(
+        self,
+        session: ClientSession,
+        delete_start: int,
+        delete_end: int,
+    ) -> bool:
+        """Remove motion frames ``[delete_start, delete_end)`` and shorten the clip."""
+        if delete_end <= delete_start or delete_start < 0:
+            return False
+        with session.motion_tensor_lock:
+            if session.motion_tensor is None:
+                return False
+            source_frames = session.motion_tensor.shape[1]
+            if delete_end > source_frames:
+                delete_end = source_frames
+            if delete_end <= delete_start:
+                return False
+
+            keep_before = session.motion_tensor[:, :delete_start]
+            keep_after = session.motion_tensor[:, delete_end:]
+            session.motion_tensor = torch.cat([keep_before, keep_after], dim=1)
+
+            if session.joints_pos is not None:
+                session.joints_pos = torch.cat(
+                    [session.joints_pos[:, :delete_start], session.joints_pos[:, delete_end:]],
+                    dim=1,
+                )
+            if session.joints_rot is not None:
+                session.joints_rot = torch.cat(
+                    [session.joints_rot[:, :delete_start], session.joints_rot[:, delete_end:]],
+                    dim=1,
+                )
+            if session.foot_contacts is not None:
+                session.foot_contacts = torch.cat(
+                    [session.foot_contacts[:, :delete_start], session.foot_contacts[:, delete_end:]],
+                    dim=1,
+                )
+            if session.root_velocities is not None:
+                session.root_velocities = torch.cat(
+                    [
+                        session.root_velocities[:, :delete_start],
+                        session.root_velocities[:, delete_end:],
+                    ],
+                    dim=1,
+                )
+
+        session.max_frame_idx = session.motion_tensor.shape[1] - 1
+        session.gui_elements.gui_frame_idx_input.max = session.max_frame_idx
+        return True
+
+    def _on_timeline_prompt_delete(self, client_id: int, prompt_id: str) -> None:
+        """Remove a deleted prompt's motion span and repack the clip."""
+        if not self.client_active(client_id):
+            return
+        session = self.client_sessions[client_id]
+        client = session.client
+        if session.timeline_data is None or not hasattr(client, "timeline"):
+            return
+
+        with session.replan_lock:
+            with session.motion_tensor_lock:
+                has_motion = session.motion_tensor is not None
+            if not has_motion:
+                return
+
+            prompt_spans = session.timeline_data.get("prompt_spans", {})
+            old_span = prompt_spans.get(prompt_id)
+            if old_span is None:
+                self._sync_prompt_spans(session, client)
+                return
+
+            delete_start, delete_end = int(old_span[0]), int(old_span[1])
+            if delete_end <= delete_start:
+                return
+
+            session.playing = False
+            playhead_before = session.frame_idx
+
+            if not self._delete_session_motion_frames(session, delete_start, delete_end):
+                return
+
+            self._remove_constraints_in_frame_range(client_id, delete_start, delete_end)
+
+            loop_uuid = session.timeline_data.get("loop_prompt_uuid")
+            if prompt_id == loop_uuid:
+                session.timeline_data["loop_prompt_uuid"] = None
+                session.loop_content_frame_count = None
+            elif session.loop_content_frame_count is not None:
+                blend_frames = self._resolve_loop_blend_frames(session)
+                session.loop_content_frame_count = max(session.max_frame_idx + 1 - blend_frames, 1)
+
+            prompt_uuid_list = session.timeline_data.get("prompt_uuid_list", [])
+            if prompt_id in prompt_uuid_list:
+                prompt_uuid_list.remove(prompt_id)
+            prompt_spans.pop(prompt_id, None)
+
+            session.timeline_data["user_prompt_layout"] = True
+            self._sync_prompt_spans(session, client)
+
+            clip_last_frame = session.max_frame_idx
+            if clip_last_frame < 0:
+                session.target_animation_end_frame = None
+                session.animation_limit_base_frame = 0
+            else:
+                session.target_animation_end_frame = clip_last_frame
+                gui_frames = int(session.gui_elements.gui_constraint_num_frames.value)
+                if gui_frames > 0:
+                    session.gui_elements.gui_constraint_num_frames.value = clip_last_frame + 1
+                    session.animation_limit_base_frame = 0
+
+            new_playhead = resolve_playhead_after_delete(
+                playhead_before, delete_start, delete_end
+            )
+            new_playhead = min(new_playhead, clip_last_frame) if clip_last_frame >= 0 else 0
+            self._refresh_timeline_display(client_id)
+            self.set_frame(client_id, max(0, new_playhead))
+            self.sync_loop_gui_controls(client_id)
+            print(
+                f"Deleted prompt '{prompt_id}' motion [{delete_start}:{delete_end}), "
+                f"clip length -> {clip_last_frame + 1}"
+            )
 
     def _trim_session_motion_to_frame_count(self, session: ClientSession, frame_count: int) -> None:
         """Crop all motion tensors to ``frame_count`` frames."""

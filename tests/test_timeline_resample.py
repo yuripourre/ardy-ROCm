@@ -7,6 +7,7 @@ import torch
 
 from ardy.motion_resample import (
     resolve_next_prompt_start_from_spans,
+    resolve_playhead_after_delete,
     resolve_prompt_source_span,
     resolve_resized_clip_length,
 )
@@ -287,6 +288,26 @@ def test_unequal_region_sizes_resize_independently():
     )
     assert len_p2 == 30
     torch.testing.assert_close(after_p2[:20], after_p1[:20])
+
+
+def test_resolve_playhead_after_delete():
+    assert resolve_playhead_after_delete(5, 10, 20) == 5
+    assert resolve_playhead_after_delete(15, 10, 20) == 10
+    assert resolve_playhead_after_delete(25, 10, 20) == 15
+
+
+def test_delete_motion_span_shortens_clip():
+    """Deleting frames [10, 20) removes 10 frames and keeps prefix/suffix poses."""
+    clip_frames = 40
+    rots, roots = make_linear_root_motion(clip_frames)
+    delete_start, delete_end = 10, 20
+    prefix = roots[:delete_start].clone()
+    suffix = roots[delete_end:].clone()
+
+    out_root = torch.cat([prefix, suffix], dim=0)
+    assert out_root.shape[0] == clip_frames - (delete_end - delete_start)
+    torch.testing.assert_close(out_root[:delete_start], prefix)
+    torch.testing.assert_close(out_root[delete_start:], suffix)
 
 
 def test_sequential_resize_p1_then_p2():

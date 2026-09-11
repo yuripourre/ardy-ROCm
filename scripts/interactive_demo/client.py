@@ -439,6 +439,13 @@ class ClientMixin:
                 return
             self.client_sessions[client_id].pending_prompt_resize = prompt_id
 
+        @client.timeline.on_prompt_delete
+        def handle_prompt_delete(prompt_id: str):
+            """Queue delete handling on the playback thread (Viser callbacks are off-thread)."""
+            if not self.client_active(client_id):
+                return
+            self.client_sessions[client_id].pending_prompt_delete = prompt_id
+
     def on_client_disconnect(self, client: viser.ClientHandle) -> None:
         """Clean up when client disconnects."""
         print(f"Client {client.client_id} disconnected")

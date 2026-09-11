@@ -311,6 +311,16 @@ def resolve_restart_from_now_generate_start(current_frame: int) -> int:
     return current_frame + 1
 
 
+def resolve_playhead_after_delete(frame_idx: int, delete_start: int, delete_end: int) -> int:
+    """Playhead index after removing motion frames ``[delete_start, delete_end)``."""
+    delete_count = delete_end - delete_start
+    if frame_idx >= delete_end:
+        return frame_idx - delete_count
+    if frame_idx >= delete_start:
+        return delete_start
+    return frame_idx
+
+
 def resolve_restart_prompt_text(generate_prompt: str, text_prompt: str) -> str:
     """Prompt to encode on Restart / Restart From Now.
 

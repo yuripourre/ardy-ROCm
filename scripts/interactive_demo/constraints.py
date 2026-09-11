@@ -588,6 +588,94 @@ class ConstraintsMixin:
             return "End-Effectors"
         return constraint_type
 
+    def _remove_constraints_in_frame_range(
+        self,
+        client_id: int,
+        delete_start: int,
+        delete_end: int,
+    ) -> None:
+        """Remove constraints in ``[delete_start, delete_end)`` and shift later ones left."""
+        if not self.client_active(client_id):
+            return
+        session = self.client_sessions[client_id]
+        if session.timeline_data is None:
+            return
+
+        delete_count = delete_end - delete_start
+        with session.timeline_data["keyframe_update_lock"]:
+            for keyframe_id, keyframe_data in list(session.timeline_data.get("keyframes", {}).items()):
+                frame = int(keyframe_data["frame"])
+                track_id = keyframe_data["track_id"]
+                constraint_type = self._constraint_type_from_track(session, track_id)
+                if delete_start <= frame < delete_end:
+                    self.remove_constraint_callback(
+                        client_id,
+                        keyframe_id,
+                        constraint_type,
+                        (frame, frame),
+                        verbose=False,
+                    )
+                    session.timeline_data["keyframes"].pop(keyframe_id, None)
+                elif frame >= delete_end:
+                    new_frame = frame - delete_count
+                    self.remove_constraint_callback(
+                        client_id,
+                        keyframe_id,
+                        constraint_type,
+                        (frame, frame),
+                        verbose=False,
+                    )
+                    session.timeline_data["keyframes"].pop(keyframe_id, None)
+                    self.add_constraint_callback(
+                        client_id,
+                        keyframe_id,
+                        constraint_type,
+                        (new_frame, new_frame),
+                    )
+                    session.timeline_data["keyframes"][keyframe_id] = {
+                        "frame": new_frame,
+                        "track_id": track_id,
+                    }
+
+            for interval_id, interval_data in list(session.timeline_data.get("intervals", {}).items()):
+                start_frame = int(interval_data["start_frame_idx"])
+                end_frame = int(interval_data["end_frame_idx"])
+                track_id = interval_data["track_id"]
+                constraint_type = self._constraint_type_from_track(session, track_id)
+                if end_frame < delete_start:
+                    continue
+                if start_frame >= delete_end:
+                    new_start = start_frame - delete_count
+                    new_end = end_frame - delete_count
+                    self.remove_constraint_callback(
+                        client_id,
+                        interval_id,
+                        constraint_type,
+                        (start_frame, end_frame),
+                        verbose=False,
+                    )
+                    session.timeline_data["intervals"].pop(interval_id, None)
+                    self.add_constraint_callback(
+                        client_id,
+                        interval_id,
+                        constraint_type,
+                        (new_start, new_end),
+                    )
+                    session.timeline_data["intervals"][interval_id] = {
+                        "track_id": track_id,
+                        "start_frame_idx": new_start,
+                        "end_frame_idx": new_end,
+                    }
+                    continue
+                self.remove_constraint_callback(
+                    client_id,
+                    interval_id,
+                    constraint_type,
+                    (start_frame, end_frame),
+                    verbose=False,
+                )
+                session.timeline_data["intervals"].pop(interval_id, None)
+
     def _remove_constraints_from_frame(self, client_id: int, first_frame: int) -> None:
         """Drop timeline constraints at or after ``first_frame``."""
         if not self.client_active(client_id):

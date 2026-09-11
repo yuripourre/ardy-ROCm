@@ -31,6 +31,11 @@ class PlaybackMixin:
                 session.pending_prompt_resize = None
                 self._on_timeline_prompt_resize(client_id, pending_resize)
 
+            pending_delete = session.pending_prompt_delete
+            if pending_delete is not None:
+                session.pending_prompt_delete = None
+                self._on_timeline_prompt_delete(client_id, pending_delete)
+
             last_update_time = time.time()
 
             # Update frame if playing
