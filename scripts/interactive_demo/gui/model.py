@@ -207,19 +207,7 @@ class GuiModelMixin:
                         initial_value=2.0,
                         hint="Guidance weight for kinematic constraints.",
                     )
-                g.gui_seed = client.gui.add_number("Seed", initial_value=2)
                 g.gui_num_samples = client.gui.add_number("Num Samples", initial_value=1, disabled=True)
-
-                @g.gui_seed.on_update
-                def _(event: viser.GuiEvent) -> None:
-                    seed_everything(g.gui_seed.value)
-                    if event.client:
-                        event.client.add_notification(
-                            title="Seed updated",
-                            body="Random seed has been updated.",
-                            auto_close_seconds=1.0,
-                            color="blue",
-                        )
 
             @g.gui_load_model_button.on_click
             def _(event: viser.GuiEvent) -> None:

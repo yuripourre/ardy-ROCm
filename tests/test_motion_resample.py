@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
 
-from ardy.motion_resample import resample_local_motion
+from ardy.motion_resample import append_cycle_blend_frames, interpolate_local_pose, resample_local_motion
 
 
 def _make_motion(num_frames: int, num_joints: int = 3) -> tuple[torch.Tensor, torch.Tensor]:
@@ -57,3 +57,40 @@ def test_resample_noop_when_lengths_match():
     out_rots, out_root = resample_local_motion(local_rot_mats, root_trans, 15)
     assert out_rots is local_rot_mats
     assert out_root is root_trans
+
+
+def test_interpolate_local_pose_endpoints():
+    local_rot_mats, root_trans = _make_motion(10)
+    rots_a, root_a = local_rot_mats[0], root_trans[0]
+    rots_b, root_b = local_rot_mats[-1], root_trans[-1]
+
+    at_zero_rots, at_zero_root = interpolate_local_pose(rots_a, root_a, rots_b, root_b, 0.0)
+    torch.testing.assert_close(at_zero_rots, rots_a)
+    torch.testing.assert_close(at_zero_root, root_a)
+
+    at_one_rots, at_one_root = interpolate_local_pose(rots_a, root_a, rots_b, root_b, 1.0)
+    torch.testing.assert_close(at_one_rots, rots_b, atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(at_one_root, root_b)
+
+
+def test_append_cycle_blend_frames_length():
+    local_rot_mats, root_trans = _make_motion(10)
+    blend_frames = 4
+    out_rots, out_root = append_cycle_blend_frames(local_rot_mats, root_trans, blend_frames)
+
+    expected_frames = 10 + blend_frames - 1
+    assert out_rots.shape[0] == expected_frames
+    assert out_root.shape[0] == expected_frames
+    torch.testing.assert_close(out_rots[0], local_rot_mats[0], atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(out_root[0], root_trans[0])
+    last_blend_rots, _ = interpolate_local_pose(
+        local_rot_mats[-1], root_trans[-1], local_rot_mats[0], root_trans[0], 0.75
+    )
+    torch.testing.assert_close(out_rots[-1], last_blend_rots, atol=1e-4, rtol=1e-4)
+
+
+def test_append_cycle_blend_frames_k_one():
+    local_rot_mats, root_trans = _make_motion(10)
+    out_rots, out_root = append_cycle_blend_frames(local_rot_mats, root_trans, 1)
+    assert out_rots.shape[0] == 10
+    assert out_root.shape[0] == 10

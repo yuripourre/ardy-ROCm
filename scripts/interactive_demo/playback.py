@@ -75,7 +75,7 @@ class PlaybackMixin:
 
     def _timeline_frame_range(self, session: ClientSession, frame_idx: int) -> tuple[int, int]:
         """Visible timeline span: capped clip when Animation Frames is set, else rolling window."""
-        target_end = self._resolve_animation_end_frame(session)
+        target_end = self._resolve_effective_end_frame(session)
         if target_end is not None:
             return 0, target_end
         window_start = max(0, frame_idx - TIMELINE_WINDOW_BEFORE)
@@ -84,7 +84,7 @@ class PlaybackMixin:
 
     def _prompt_end_frame(self, session: ClientSession) -> int:
         """Prompt bar end: animation cap when set, otherwise unbounded."""
-        target_end = self._resolve_animation_end_frame(session)
+        target_end = self._resolve_effective_end_frame(session)
         if target_end is not None:
             return target_end
         return INFINITE_FRAME_IDX

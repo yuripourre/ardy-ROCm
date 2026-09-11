@@ -188,6 +188,9 @@ TIMELINE_WINDOW_AFTER = 200
 
 ARROW_KEYS = {"ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"}
 FRAME_NAV_FAST_STEP = 10
+DEFAULT_LOOP_BLEND_FRAMES = 4
+MIN_LOOP_BLEND_FRAMES = 1
+MAX_LOOP_BLEND_FRAMES = 60
 
 TARGET_VELOCITY_UPDATE_INTERVAL = 4
 TARGET_VELOCITY_GOAL_FRAME_INTERVAL = 10
@@ -228,6 +231,7 @@ class GuiElements:
     gui_prompt_text: viser.GuiInputHandle[str]
     gui_active_prompt_label: viser.GuiInputHandle
     gui_seed: viser.GuiInputHandle[int]
+    gui_randomize_seed_checkbox: viser.GuiInputHandle[bool]
     gui_use_target_velocity_checkbox: viser.GuiInputHandle[bool]
     gui_target_root_velocity: viser.GuiInputHandle  # 2D vector (x, z) for target root velocity
     gui_use_target_heading_checkbox: viser.GuiInputHandle[bool]
@@ -248,6 +252,8 @@ class GuiElements:
     gui_waypoint_interval: viser.GuiInputHandle[int]
     gui_max_keyframe_num: viser.GuiInputHandle[int]
     gui_constraint_num_frames: viser.GuiInputHandle[int]
+    gui_loop_cycle_checkbox: viser.GuiInputHandle[bool]
+    gui_loop_blend_frames: viser.GuiInputHandle[int]
     gui_motion_file_path: viser.GuiInputHandle[str]
     gui_constraint_fullbody_checkbox: viser.GuiInputHandle[bool]
     gui_constraint_hands_checkbox: viser.GuiInputHandle[bool]

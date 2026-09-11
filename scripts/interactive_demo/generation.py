@@ -3,19 +3,51 @@
 
 """Part of InteractiveTimelineDemo (split for readability)."""
 
-from ardy.motion_resample import resample_local_motion
+from ardy.motion_resample import append_cycle_blend_frames, resample_local_motion
 
 from .common import *  # noqa: F401,F403
 from .window_budget import compute_window_num_frames
 
 
 class GenerationMixin:
+    def _apply_generation_seed(self, session: ClientSession) -> int:
+        """Apply fixed or random seed before a new generation run."""
+        gui = session.gui_elements
+        if gui.gui_randomize_seed_checkbox.value:
+            seed = random.randint(0, 2**31 - 1)
+            gui.gui_seed.value = seed
+        else:
+            seed = int(gui.gui_seed.value)
+        seed_everything(seed)
+        return seed
+
+    def _is_loop_cycle_active(self, session: ClientSession) -> bool:
+        """True when Loop Cycle is enabled and Animation Frames is set."""
+        gui = session.gui_elements
+        return int(gui.gui_constraint_num_frames.value) > 0 and gui.gui_loop_cycle_checkbox.value
+
+    def _resolve_loop_blend_frames(self, session: ClientSession) -> int:
+        """Return K blend frames when Loop Cycle is on, else 0."""
+        if not self._is_loop_cycle_active(session):
+            return 0
+        return max(MIN_LOOP_BLEND_FRAMES, int(session.gui_elements.gui_loop_blend_frames.value))
+
     def _resolve_animation_end_frame(self, session: ClientSession) -> Optional[int]:
         """Return the last allowed frame index when Animation Frames is set, else None."""
         gui_frames = int(session.gui_elements.gui_constraint_num_frames.value)
         if gui_frames > 0:
             return session.animation_limit_base_frame + gui_frames - 1
         return session.target_animation_end_frame
+
+    def _resolve_effective_end_frame(self, session: ClientSession) -> Optional[int]:
+        """Timeline/playback end frame, including loop blend extension when active."""
+        target_end = self._resolve_animation_end_frame(session)
+        if target_end is None:
+            return None
+        blend_frames = self._resolve_loop_blend_frames(session)
+        if blend_frames > 0:
+            return target_end + blend_frames - 1
+        return target_end
 
     def _resample_session_motion_to_length(self, session: ClientSession, target_frames: int) -> None:
         """Time-warp the full session clip to ``target_frames`` (SLERP + linear root)."""
@@ -76,6 +108,78 @@ class GenerationMixin:
         session.gui_elements.gui_frame_idx_input.max = session.max_frame_idx
         print(f"Resampled generated motion from {source_frames} to {target_frames} frames")
 
+    def _append_loop_cycle_blend(self, session: ClientSession) -> None:
+        """Append K blend frames from last toward first, drop duplicate, re-encode motion."""
+        if not self._is_loop_cycle_active(session):
+            return
+        if session.motion_tensor is None or session.motion_rep is None:
+            return
+
+        target_end = self._resolve_animation_end_frame(session)
+        if target_end is None:
+            return
+
+        content_frames = target_end + 1
+        blend_frames = self._resolve_loop_blend_frames(session)
+        if blend_frames < 1:
+            return
+        if session.motion_tensor.shape[1] != content_frames:
+            return
+
+        inverse_out = session.motion_rep.inverse(session.motion_tensor, is_normalized=True)
+        local_rot_mats = inverse_out["local_rot_mats"]
+        root_positions = inverse_out["root_positions"]
+        num_samples = local_rot_mats.shape[0]
+
+        blended_rots = []
+        blended_roots = []
+        for sample_idx in range(num_samples):
+            rots, root = append_cycle_blend_frames(
+                local_rot_mats[sample_idx],
+                root_positions[sample_idx],
+                blend_frames,
+            )
+            blended_rots.append(rots)
+            blended_roots.append(root)
+        local_rot_mats = torch.stack(blended_rots, dim=0)
+        root_positions = torch.stack(blended_roots, dim=0)
+        output_frames = content_frames + blend_frames - 1
+        lengths = torch.full(
+            (num_samples,),
+            output_frames,
+            device=local_rot_mats.device,
+            dtype=torch.long,
+        )
+        feats_unnorm = session.motion_rep(
+            local_rot_mats,
+            root_positions,
+            to_normalize=False,
+            lengths=lengths,
+        )
+        feats_norm = session.motion_rep.normalize(feats_unnorm)
+        decoded = session.motion_rep.inverse(feats_unnorm, is_normalized=False)
+        joint_velocities = feats_unnorm[:, :, session.motion_rep.slice_dict["velocities"]]
+        joint_velocities = joint_velocities.reshape(
+            num_samples,
+            output_frames,
+            session.motion_rep.skeleton.nbjoints,
+            3,
+        )
+        root_velocities = joint_velocities[:, :, session.motion_rep.skeleton.root_idx, :]
+
+        with session.motion_tensor_lock:
+            session.motion_tensor = feats_norm
+            session.joints_pos = decoded["posed_joints"]
+            session.joints_rot = decoded["global_rot_mats"]
+            session.foot_contacts = decoded["foot_contacts"]
+            session.root_velocities = root_velocities
+            session.max_frame_idx = output_frames - 1
+        session.gui_elements.gui_frame_idx_input.max = session.max_frame_idx
+        print(
+            f"Loop cycle: appended {blend_frames} blend frames, dropped duplicate, "
+            f"clip is {output_frames} frames."
+        )
+
     def _apply_animation_frame_limit(self, client_id: int, session: ClientSession) -> None:
         """Time-warp generated motion to the Animation Frames length and clamp the timeline."""
         target_end = self._resolve_animation_end_frame(session)
@@ -84,8 +188,10 @@ class GenerationMixin:
         target_frames = target_end + 1
         if session.motion_tensor is not None and session.motion_tensor.shape[1] != target_frames:
             self._resample_session_motion_to_length(session, target_frames)
-        if session.frame_idx > target_end:
-            self.set_frame(client_id, target_end)
+        self._append_loop_cycle_blend(session)
+        effective_end = self._resolve_effective_end_frame(session)
+        if effective_end is not None and session.frame_idx > effective_end:
+            self.set_frame(client_id, effective_end)
         elif hasattr(session.client, "timeline"):
             try:
                 window_start, window_end = self._timeline_frame_range(session, session.frame_idx)
@@ -98,6 +204,7 @@ class GenerationMixin:
         if not self.client_active(client_id):
             return
         session = self.client_sessions[client_id]
+        self._apply_generation_seed(session)
 
         playing = session.playing
         session.playing = False
@@ -159,6 +266,8 @@ class GenerationMixin:
             # No motion yet, fall back to normal restart
             self.restart(client_id)
             return
+
+        self._apply_generation_seed(session)
 
         playing = session.playing
         session.playing = False

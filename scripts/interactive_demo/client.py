@@ -120,7 +120,7 @@ class ClientMixin:
             # Initialize text embedding and generate initial motion
             if session.model is not None:
                 report_progress("Generating initial motion...")
-                seed_everything(gui_elements.gui_seed.value)
+                self._apply_generation_seed(session)
                 text_feat, _ = session.model.text_encoder([gui_elements.gui_prompt_text.value])
                 session.text_embedding = text_feat.to(self.device)
                 # Generate initial motion

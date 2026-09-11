@@ -9,6 +9,20 @@ from ..common import *  # noqa: F401,F403
 class GuiGenerateMixin:
     def _build_generate_tab(self, client, client_id, tab_group, g, timeline, default_prompt):
         with tab_group.add_tab("Generate", viser.Icon.WALK):
+            g.gui_seed = client.gui.add_number(
+                "Seed",
+                initial_value=2,
+                min=0,
+                max=2**31 - 1,
+                step=1,
+                hint="Random seed for generation (used when Randomize Seed is unchecked)",
+            )
+            g.gui_randomize_seed_checkbox = client.gui.add_checkbox(
+                "Randomize Seed",
+                initial_value=False,
+                hint="When checked, a new random seed is used on each Restart",
+            )
+
             g.gui_restart_button = client.gui.add_button("Restart", color="orange")
             g.gui_restart_from_now_button = client.gui.add_button(
                 "Restart From Now",
@@ -17,6 +31,26 @@ class GuiGenerateMixin:
             )
 
             g.gui_clear_all_constraints_button = client.gui.add_button("Clear All Constraints", color="red")
+
+            def _sync_seed_controls() -> None:
+                g.gui_seed.disabled = g.gui_randomize_seed_checkbox.value
+
+            @g.gui_randomize_seed_checkbox.on_update
+            def _(_) -> None:
+                _sync_seed_controls()
+
+            @g.gui_seed.on_update
+            def _(event: viser.GuiEvent) -> None:
+                if g.gui_randomize_seed_checkbox.value:
+                    return
+                seed_everything(int(g.gui_seed.value))
+                if event.client:
+                    event.client.add_notification(
+                        title="Seed updated",
+                        body="Random seed has been updated.",
+                        auto_close_seconds=1.0,
+                        color="blue",
+                    )
 
             @g.gui_clear_all_constraints_button.on_click
             def _(event: viser.GuiEvent) -> None:
@@ -127,6 +161,40 @@ class GuiGenerateMixin:
                     step=1,
                     hint="Resample the entire motion clip to this many frames (0 = no resample; ignores Crop to 10s when set)",
                 )
+
+                g.gui_loop_cycle_checkbox = client.gui.add_checkbox(
+                    "Loop Cycle",
+                    initial_value=False,
+                    disabled=True,
+                    hint="Enabled when Animation Frames is set. Always appends Loop Blend Frames from the last pose toward the first.",
+                )
+                g.gui_loop_blend_frames = client.gui.add_number(
+                    "Loop Blend Frames",
+                    initial_value=DEFAULT_LOOP_BLEND_FRAMES,
+                    min=MIN_LOOP_BLEND_FRAMES,
+                    max=MAX_LOOP_BLEND_FRAMES,
+                    step=1,
+                    disabled=True,
+                    hint="Interpolated frames from last pose toward first when Loop Cycle is on",
+                )
+
+                def _sync_loop_cycle_controls() -> None:
+                    has_frames = int(g.gui_constraint_num_frames.value) > 0
+                    if not has_frames:
+                        g.gui_loop_cycle_checkbox.value = False
+                        g.gui_loop_cycle_checkbox.disabled = True
+                        g.gui_loop_blend_frames.disabled = True
+                    else:
+                        g.gui_loop_cycle_checkbox.disabled = False
+                        g.gui_loop_blend_frames.disabled = not g.gui_loop_cycle_checkbox.value
+
+                @g.gui_constraint_num_frames.on_update
+                def _(_) -> None:
+                    _sync_loop_cycle_controls()
+
+                @g.gui_loop_cycle_checkbox.on_update
+                def _(_) -> None:
+                    _sync_loop_cycle_controls()
 
                 # Constraint type checkboxes
                 g.gui_constraint_fullbody_checkbox = client.gui.add_checkbox("Full Body", initial_value=True)
