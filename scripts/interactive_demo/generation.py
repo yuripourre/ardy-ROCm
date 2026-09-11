@@ -10,7 +10,9 @@ from ardy.motion_resample import (
     resolve_next_prompt_start_from_spans,
     resolve_prompt_source_span,
     resolve_resized_clip_length,
+    resolve_restart_from_now_generate_start,
     resolve_restart_from_now_keep_end,
+    resolve_restart_prompt_text,
     should_skip_generation_at_limit,
 )
 
@@ -677,12 +679,17 @@ class GenerationMixin:
         session.camera_last_update_frame = -1
 
         self.clear_timeline_prompts(client_id)
-        self._sync_generate_prompt_to_text_tab(session)
+        generate_prompt = self._sync_generate_prompt_to_text_tab(session)
+        restart_prompt = resolve_restart_prompt_text(
+            generate_prompt,
+            session.gui_elements.gui_prompt_text.value,
+        )
         self.on_text_prompt_update(
             client_id,
             trigger_replan=False,
             initial_prompt=True,
             show_notification=False,
+            prompt_text=restart_prompt,
         )
         self._refresh_timeline_display(client_id)
 
@@ -713,8 +720,9 @@ class GenerationMixin:
         session.playing = False
 
         with session.replan_lock:
-            # Keep frames through the playhead; regenerate starting at current_frame.
+            # Keep frames through the playhead; regenerate starting at the next frame.
             keep_end = resolve_restart_from_now_keep_end(current_frame)
+            generate_start = resolve_restart_from_now_generate_start(current_frame)
             with session.motion_tensor_lock:
                 if session.motion_tensor is not None:
                     session.motion_tensor = session.motion_tensor[:, :keep_end]
@@ -737,20 +745,27 @@ class GenerationMixin:
             if session.timeline_data is not None:
                 session.timeline_data["user_prompt_layout"] = False
 
-            self._remove_constraints_from_frame(client_id, current_frame)
+            self._remove_constraints_from_frame(client_id, generate_start)
 
             if session.timeline_data is not None:
                 self._remove_loop_prompt_region(session, session.client)
 
-            self._sync_generate_prompt_to_text_tab(session)
+            generate_prompt = self._sync_generate_prompt_to_text_tab(session)
+            restart_prompt = resolve_restart_prompt_text(
+                generate_prompt,
+                session.gui_elements.gui_prompt_text.value,
+            )
             self.on_text_prompt_update(
                 client_id,
                 trigger_replan=False,
                 show_notification=False,
-                segment_start_at_playhead=True,
+                prompt_text=restart_prompt,
             )
 
-            print(f"[Restart From Now] Cleared motion after frame {current_frame}, triggering generation")
+            print(
+                f"[Restart From Now] Cleared motion after frame {current_frame}, "
+                f"generating from frame {generate_start}"
+            )
 
             session.skip_animation_frame_limit = True
             try:
@@ -764,13 +779,13 @@ class GenerationMixin:
                 self._resample_session_motion_span(
                     session,
                     "",
-                    current_frame,
+                    generate_start,
                     source_end,
-                    current_frame,
-                    current_frame + gui_frames,
+                    generate_start,
+                    generate_start + gui_frames,
                 )
-                session.animation_limit_base_frame = current_frame
-                session.target_animation_end_frame = current_frame + gui_frames - 1
+                session.animation_limit_base_frame = generate_start
+                session.target_animation_end_frame = generate_start + gui_frames - 1
 
             self._refresh_timeline_display(client_id)
             self.set_frame(client_id, current_frame)

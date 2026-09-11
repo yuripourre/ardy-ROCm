@@ -11,7 +11,9 @@ from ardy.motion_resample import (
     resolve_effective_playback_end,
     resolve_next_prompt_start_from_spans,
     resolve_prompt_source_span,
+    resolve_restart_from_now_generate_start,
     resolve_restart_from_now_keep_end,
+    resolve_restart_prompt_text,
     should_pause_playback_at_clip_end,
     should_skip_generation_at_limit,
 )
@@ -76,21 +78,63 @@ def test_initial_limit_shrink_increases_speed():
 
 
 def test_rfn_warps_tail_preserves_prefix():
-    """RFN at frame 20 warps tail to 40 frames while keeping prefix intact."""
+    """RFN at frame 20 warps tail to 40 frames while keeping prefix through playhead."""
     rots, roots = make_linear_root_motion(90)
+    generate_start = resolve_restart_from_now_generate_start(20)
     out_rots, out_root, out_len = apply_rfn_tail_warp(rots, roots, 20, 40)
 
-    assert out_len == 60
-    assert out_rots.shape[0] == 60
-    torch.testing.assert_close(out_root[:20], roots[:20])
+    assert out_len == generate_start + 40
+    assert out_rots.shape[0] == generate_start + 40
+    torch.testing.assert_close(out_root[:generate_start], roots[:generate_start])
 
-    end_frame = resolve_animation_end_frame(20, 40, None)
-    assert end_frame == 59
+    end_frame = resolve_animation_end_frame(generate_start, 40, None)
+    assert end_frame == generate_start + 40 - 1
 
 
 def test_resolve_restart_from_now_keep_end_includes_playhead():
     assert resolve_restart_from_now_keep_end(0) == 1
     assert resolve_restart_from_now_keep_end(39) == 40
+
+
+def test_resolve_restart_from_now_generate_start_after_playhead():
+    assert resolve_restart_from_now_generate_start(9) == 10
+    assert resolve_restart_from_now_generate_start(39) == 40
+
+
+def test_resolve_restart_prompt_text_prefers_generate_tab():
+    assert (
+        resolve_restart_prompt_text("a person is waving", "a person is walking")
+        == "a person is waving"
+    )
+
+
+def test_rfn_at_last_frame_of_short_clip():
+    """10-frame clip, RFN at frame 9: keep frame 9, new region starts at 10."""
+    rots, roots = make_linear_root_motion(30)
+    clip_rots, clip_roots = rots[:10], roots[:10]
+    current_frame = 9
+    gui_frames = 10
+
+    assert resolve_restart_from_now_keep_end(current_frame) == 10
+    generate_start = resolve_restart_from_now_generate_start(current_frame)
+    assert generate_start == 10
+
+    trimmed_rots, trimmed_roots = trim_motion_before_rfn(clip_rots, clip_roots, current_frame)
+    assert trimmed_roots.shape[0] == 10
+    playhead_pose = clip_roots[current_frame].clone()
+
+    out_rots, out_root, out_len = apply_rfn_tail_warp(
+        clip_rots,
+        clip_roots,
+        current_frame,
+        gui_frames,
+        trim_prefix=True,
+        generated_tail_rots=rots[generate_start:],
+        generated_tail_roots=roots[generate_start:],
+    )
+    assert out_len == generate_start + gui_frames
+    torch.testing.assert_close(out_root[current_frame], playhead_pose)
+    assert out_root.shape[0] > generate_start
 
 
 def test_rfn_trim_preserves_playhead_frame():
@@ -107,44 +151,52 @@ def test_rfn_at_last_capped_frame_with_animation_limit():
     rots, roots = make_linear_root_motion(80)
     rots, roots = apply_initial_animation_limit(rots, roots, 40)
     prefix_before = roots[:40].clone()
+    generate_start = resolve_restart_from_now_generate_start(39)
 
     trimmed_rots, trimmed_roots = trim_motion_before_rfn(rots, roots, 39)
     assert trimmed_roots.shape[0] == 40
     torch.testing.assert_close(trimmed_roots, prefix_before)
 
     out_rots, out_root, out_len = apply_rfn_tail_warp(
-        rots, roots, 39, 25, trim_prefix=True
+        rots,
+        roots,
+        39,
+        25,
+        trim_prefix=True,
+        generated_tail_rots=rots[generate_start:],
+        generated_tail_roots=roots[generate_start:],
     )
-    assert out_len == 64
-    torch.testing.assert_close(out_root[:39], prefix_before[:39])
-    torch.testing.assert_close(out_root[39], prefix_before[39])
+    assert out_len == generate_start + 25
+    torch.testing.assert_close(out_root[:generate_start], prefix_before)
 
 
 def test_rfn_tail_warp_not_trimmed():
     """RFN tail warp keeps full source span, not a short stale bar."""
     rots, roots = make_linear_root_motion(90)
-    source_start, source_end = resolve_prompt_source_span(20, 90, None)
-    assert (source_start, source_end) == (20, 90)
+    generate_start = resolve_restart_from_now_generate_start(20)
+    source_start, source_end = resolve_prompt_source_span(generate_start, 90, None)
+    assert (source_start, source_end) == (generate_start, 90)
 
     _, out_root, out_len = apply_rfn_tail_warp(rots, roots, 20, 40)
-    assert out_len == 60
-    assert out_root.shape[0] == 60
+    assert out_len == generate_start + 40
+    assert out_root.shape[0] == generate_start + 40
 
 
 def test_two_segment_chain():
     """Limit 40, then RFN at 30 with 25 frames."""
     rots, roots = make_linear_root_motion(120)
     rots, roots = apply_initial_animation_limit(rots, roots, 40)
-    prefix_before_rfn = roots[:30].clone()
+    generate_start = resolve_restart_from_now_generate_start(30)
+    prefix_before_rfn = roots[: generate_start].clone()
 
     rots, roots, out_len = apply_rfn_tail_warp(rots, roots, 30, 25)
-    assert out_len == 55
-    torch.testing.assert_close(roots[:30], prefix_before_rfn)
+    assert out_len == generate_start + 25
+    torch.testing.assert_close(roots[:generate_start], prefix_before_rfn)
 
-    end_frame = resolve_animation_end_frame(30, 25, None)
-    assert end_frame == 54
-    source_start, source_end = resolve_prompt_source_span(30, 55, None)
-    assert (source_start, source_end) == (30, 55)
+    end_frame = resolve_animation_end_frame(generate_start, 25, None)
+    assert end_frame == generate_start + 25 - 1
+    source_start, source_end = resolve_prompt_source_span(generate_start, out_len, None)
+    assert (source_start, source_end) == (generate_start, out_len)
 
 
 def test_three_segment_chain():
@@ -152,14 +204,15 @@ def test_three_segment_chain():
     rots, roots = make_linear_root_motion(120)
     rots, roots = apply_initial_animation_limit(rots, roots, 40)
     rots, roots, _ = apply_rfn_tail_warp(rots, roots, 30, 25)
-    prefix_before_second_rfn = roots[:50].clone()
+    second_generate_start = resolve_restart_from_now_generate_start(50)
+    prefix_before_second_rfn = roots[:second_generate_start].clone()
 
     rots, roots, out_len = apply_rfn_tail_warp(rots, roots, 50, 20)
-    assert out_len == 70
-    torch.testing.assert_close(roots[:50], prefix_before_second_rfn)
+    assert out_len == second_generate_start + 20
+    torch.testing.assert_close(roots[:second_generate_start], prefix_before_second_rfn)
 
-    end_frame = resolve_animation_end_frame(50, 20, None)
-    assert end_frame == 69
+    end_frame = resolve_animation_end_frame(second_generate_start, 20, None)
+    assert end_frame == second_generate_start + 20 - 1
 
 
 def test_resize_after_limit_matches_bar():

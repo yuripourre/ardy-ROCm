@@ -9,6 +9,7 @@ from ardy.motion_resample import (
     resample_local_motion,
     resolve_prompt_source_span,
     resolve_resized_clip_length,
+    resolve_restart_from_now_generate_start,
     resolve_restart_from_now_keep_end,
 )
 
@@ -121,16 +122,22 @@ def apply_rfn_tail_warp(
     gui_frames: int,
     *,
     trim_prefix: bool = False,
+    generated_tail_rots: torch.Tensor | None = None,
+    generated_tail_roots: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, int]:
     """Mirror ``restart_from_now`` post-generation span resample."""
     if trim_prefix:
         local_rot_mats, root_trans = trim_motion_before_rfn(
             local_rot_mats, root_trans, current_frame
         )
+    if generated_tail_rots is not None and generated_tail_roots is not None:
+        local_rot_mats = torch.cat([local_rot_mats, generated_tail_rots], dim=0)
+        root_trans = torch.cat([root_trans, generated_tail_roots], dim=0)
+    generate_start = resolve_restart_from_now_generate_start(current_frame)
     source_frames = local_rot_mats.shape[0]
-    source_start, source_end = resolve_prompt_source_span(current_frame, source_frames, None)
-    new_start = current_frame
-    new_end = current_frame + gui_frames
+    source_start, source_end = resolve_prompt_source_span(generate_start, source_frames, None)
+    new_start = generate_start
+    new_end = generate_start + gui_frames
     out_rots, out_root, out_len = resample_segment(
         local_rot_mats,
         root_trans,

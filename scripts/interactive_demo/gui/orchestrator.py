@@ -185,10 +185,10 @@ class GuiMixin:
         session.timeline_data["prompt_counter"] = len(kept_uuids)
         self._sync_prompt_spans(session, client)
 
-    def _sync_generate_prompt_to_text_tab(self, session: ClientSession) -> None:
-        session.gui_elements.gui_prompt_text.value = (
-            session.gui_elements.gui_generate_prompt_text.value
-        )
+    def _sync_generate_prompt_to_text_tab(self, session: ClientSession) -> str:
+        generate_prompt = session.gui_elements.gui_generate_prompt_text.value
+        session.gui_elements.gui_prompt_text.value = generate_prompt
+        return generate_prompt
 
     def on_text_prompt_update(
         self,
@@ -196,7 +196,7 @@ class GuiMixin:
         trigger_replan: bool = True,
         initial_prompt: bool = False,
         show_notification: bool = True,
-        segment_start_at_playhead: bool = False,
+        prompt_text: str | None = None,
     ):
         """Update text embedding when prompt changes and update timeline prompts."""
         start_time = time.time()
@@ -208,22 +208,23 @@ class GuiMixin:
         if session.model is None:
             return
 
-        text_prompt = session.gui_elements.gui_prompt_text.value
+        if prompt_text is None:
+            text_prompt = session.gui_elements.gui_prompt_text.value
+        else:
+            text_prompt = prompt_text
         text_feat, _ = session.model.text_encoder([text_prompt])
         session.text_embedding = text_feat.to(self.device)
 
         session.gui_elements.gui_active_prompt_label.content = f"**Active Prompt:** {text_prompt}"
 
         current_frame = max(0, session.frame_idx)
-        if segment_start_at_playhead:
-            new_segment_start = current_frame
-        elif initial_prompt:
+        if initial_prompt:
             new_segment_start = 0
         else:
             new_segment_start = current_frame + 1
 
         if session.timeline_data is not None and hasattr(client, "timeline"):
-            if segment_start_at_playhead or not initial_prompt:
+            if not initial_prompt:
                 self._close_timeline_prompts_before_frame(session, client, new_segment_start)
             prompt_uuid_list = session.timeline_data.get("prompt_uuid_list", [])
             try:

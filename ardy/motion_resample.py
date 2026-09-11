@@ -302,6 +302,24 @@ def resolve_restart_from_now_keep_end(current_frame: int) -> int:
     return current_frame + 1
 
 
+def resolve_restart_from_now_generate_start(current_frame: int) -> int:
+    """First frame index for new motion after Restart From Now.
+
+    The playhead frame is kept as continuity; generation and the new prompt
+    region start at ``current_frame + 1``.
+    """
+    return current_frame + 1
+
+
+def resolve_restart_prompt_text(generate_prompt: str, text_prompt: str) -> str:
+    """Prompt to encode on Restart / Restart From Now.
+
+    Always prefer the Generate-tab field; ``text_prompt`` documents the stale
+    Text-tab value that must not be read immediately after syncing.
+    """
+    return generate_prompt
+
+
 def should_pause_playback_at_clip_end(
     *,
     at_clip_end: bool,
